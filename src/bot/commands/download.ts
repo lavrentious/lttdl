@@ -27,6 +27,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
   try {
     const res = await downloadTiktok(query);
     if (!res) {
+      logger.error(`failed to download video from ${query} (no result)`);
       await ctx.reply("failed to download");
       await next();
       return;
