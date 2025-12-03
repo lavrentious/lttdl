@@ -57,6 +57,8 @@ export const logger = winston.createLogger({
 export function logError(e: unknown) {
   if (e instanceof Error) {
     logger.error(e.message);
+    if (e.stack) logger.error(e.stack);
+    if (e.cause) logError(e.cause);
   } else {
     logger.error(e);
   }

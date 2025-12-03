@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { initBot } from "./bot";
 import { config, validateEnvOrThrow } from "./utils/env-validation";
 import { logError, logger } from "./utils/logger";
 
@@ -22,6 +23,11 @@ async function main() {
   }
 
   logger.info("app started");
+
+  process.on("uncaughtException", (e) => logError(e));
+  process.on("unhandledRejection", (e) => logError(e));
+
+  initBot();
 }
 
 main();
