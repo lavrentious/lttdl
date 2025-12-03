@@ -6,7 +6,13 @@ import { downloadCommand } from "./commands/download";
 export function initBot() {
   const bot = new Bot(config.get("BOT_TOKEN"));
 
-  bot.command("start", (ctx) => ctx.reply("Welcome! Up and running."));
+  bot.command("start", (ctx) =>
+    ctx.reply(
+      "hi.\n" +
+        "this is a bot for downloading tiktoks without watermarks. no ads, no spam, no sponsors.\n" +
+        "send a tiktok link and get the video.",
+    ),
+  );
   bot.on("message", downloadCommand);
 
   bot.catch(logError);
