@@ -18,6 +18,7 @@ export function initBot() {
   bot.catch(logError);
 
   bot.start({
+    drop_pending_updates: true,
     onStart: () => {
       logger.info("bot started and listening...");
     },
