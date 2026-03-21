@@ -15,6 +15,8 @@ function startupCheck() {
 }
 
 export function initBot() {
+  startupCheck();
+
   const bot = new Bot(config.get("BOT_TOKEN"));
 
   bot.command("start", (ctx) =>
