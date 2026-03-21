@@ -3,6 +3,17 @@ import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
 import { downloadCommand } from "./commands/download";
 
+function startupCheck() {
+  const ffprobePath = Bun.which("ffprobe");
+
+  if (!ffprobePath) {
+    logger.crit(
+      "ffprobe is not installed in the system, but is required. install it with `apt install ffmpeg`, then we'll talk...",
+    );
+    process.exit(1);
+  }
+}
+
 export function initBot() {
   const bot = new Bot(config.get("BOT_TOKEN"));
 
