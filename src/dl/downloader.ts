@@ -2,7 +2,7 @@ import { randomUUIDv7 } from "bun";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
 import { zipArrays } from "src/utils/array";
-import { mapWithConcurrency, retryAsync } from "src/utils/async";
+import { mapWithConcurrency, retryAsync, withTimeout } from "src/utils/async";
 import { config } from "src/utils/env-validation";
 import { getImageResolution, recodeImageToJpeg } from "src/utils/image";
 import { logger } from "src/utils/logger";
@@ -19,6 +19,21 @@ const FILE_DOWNLOAD_RETRIES = 1;
 const RETRY_DELAY_MS = 300;
 const MAX_DOWNLOAD_CONCURRENCY = 3;
 const MAX_IMAGE_ENTRY_CONCURRENCY = 2;
+
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`fetch timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 type ContentVariant<T> = {
   downloadUrl: string;
@@ -53,12 +68,11 @@ async function downloadFile(url: string, dir?: string, name?: string) {
   const outputPath = path.join(dir, name);
   const arrayBuffer = await retryAsync(
     async () => {
-      const res = await fetch(url, {
-        signal: AbortSignal.timeout(FILE_DOWNLOAD_TIMEOUT_MS),
-      });
+      const res = await fetchWithTimeout(url, FILE_DOWNLOAD_TIMEOUT_MS);
       if (!res.ok) {
         throw new Error(`Failed to download: ${res.status}`);
       }
+
       return await res.arrayBuffer();
     },
     {
@@ -67,31 +81,9 @@ async function downloadFile(url: string, dir?: string, name?: string) {
       shouldRetry: isRetryableNetworkError,
     },
   );
-
   await Bun.write(outputPath, arrayBuffer, { createPath: true });
+
   return outputPath;
-}
-
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  label: string,
-): Promise<T> {
-  let timeoutId: Timer | null = null;
-
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  }
 }
 
 export enum DownloadSource {
@@ -161,9 +153,9 @@ function cleanupVariant(variant: { cleanup?: () => void }) {
   } catch {}
 }
 
-function sortByResolution<
-  T extends VideoVariant | PhotoVariant,
->(variants: T[]): T[] {
+function sortByResolution<T extends VideoVariant | PhotoVariant>(
+  variants: T[],
+): T[] {
   return [...variants].sort((a, b) =>
     a.downloaded && b.downloaded
       ? b.payload.resolution.width * b.payload.resolution.height -
@@ -325,20 +317,21 @@ async function resolveDownloadInfo(
   let fetchers = fetcherClasses.map((C) => new C(url));
 
   await Promise.allSettled(
-    fetchers.map(async (f) =>
-      await retryAsync(
-        async () =>
-          await withTimeout(
-            f.fetchInfo(),
-            FETCH_INFO_TIMEOUT_MS,
-            `${f.constructor.name} fetchInfo`,
-          ),
-        {
-          retries: FETCH_INFO_RETRIES,
-          delayMs: RETRY_DELAY_MS,
-          shouldRetry: isRetryableNetworkError,
-        },
-      ),
+    fetchers.map(
+      async (f) =>
+        await retryAsync(
+          async () =>
+            await withTimeout(
+              f.fetchInfo(),
+              FETCH_INFO_TIMEOUT_MS,
+              `${f.constructor.name} fetchInfo`,
+            ),
+          {
+            retries: FETCH_INFO_RETRIES,
+            delayMs: RETRY_DELAY_MS,
+            shouldRetry: isRetryableNetworkError,
+          },
+        ),
     ),
   );
   if (fetchers.every((f) => !f.isSuccessful())) {
@@ -431,7 +424,12 @@ export async function downloadTiktok(
 
         return attempted.length
           ? attempted
-          : [{ downloaded: false, downloadUrl: img[0]! } satisfies PhotoVariant];
+          : [
+              {
+                downloaded: false,
+                downloadUrl: img[0]!,
+              } satisfies PhotoVariant,
+            ];
       },
     );
     res = {

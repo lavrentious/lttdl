@@ -1,4 +1,7 @@
 import { $ } from "bun";
+import { withTimeout } from "./async";
+
+const FFPROBE_TIMEOUT_MS = 15000;
 
 function getTypeFromBinaryData(binaryData: Uint8Array) {
   if (
@@ -62,8 +65,11 @@ export async function getVideoSize(video: string | File): Promise<number> {
 }
 
 export async function getVideoResolution(path: string) {
-  const output =
-    await $`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of json ${path}`.text();
+  const output = await withTimeout(
+    $`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of json ${path}`.text(),
+    FFPROBE_TIMEOUT_MS,
+    "ffprobe",
+  );
   const info = JSON.parse(output);
   const stream = info.streams?.[0];
   return { width: +stream.width, height: +stream.height };

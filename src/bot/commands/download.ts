@@ -43,6 +43,7 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
   loadingMessage,
   progressText,
   fallbackText,
+  uploadFailureText,
   uploadAction,
   variants,
   links,
@@ -54,6 +55,7 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
   loadingMessage: { chat: { id: number }; message_id: number };
   progressText: string;
   fallbackText: string;
+  uploadFailureText: string;
   uploadAction: "upload_video" | "upload_voice";
   variants: T[];
   links: string[];
@@ -75,13 +77,23 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
   }
 
   const progressMessage = await ctx.reply(progressText);
+  let uploadFailed = false;
   try {
     await ctx.api.sendChatAction(loadingMessage.chat.id, uploadAction);
     await sendMedia(validFiles[0]!);
+  } catch (err) {
+    uploadFailed = true;
+    logError(err);
   } finally {
     cleanup();
     deleteMessageSafe(ctx, loadingMessage);
     deleteMessageSafe(ctx, progressMessage);
+  }
+
+  if (uploadFailed) {
+    await ctx.reply(uploadFailureText);
+    await sendChunkedLinks(ctx, links);
+    return;
   }
 
   if (verboseOutput) {
@@ -134,6 +146,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         loadingMessage: msg1,
         progressText: `video downloaded, sending...`,
         fallbackText: `video was downloaded, but it exceeds ${MAX_FILE_SIZE_MB}mb and Telegram doesn't allow sending such big files.`,
+        uploadFailureText: `video was downloaded, but Telegram rejected the upload. sending links instead.`,
         uploadAction: "upload_video",
         variants: res.variants,
         links,
@@ -150,6 +163,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
           : `image downloaded, sending... (1 version)`,
       );
       await ctx.api.sendChatAction(msg1.chat.id, "upload_photo");
+      const imageLinks = buildImageLinksMessages(res.variants);
 
       const media = res.variants
         .filter((v) => v.length)
@@ -161,18 +175,31 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             ),
           );
         });
+      let uploadFailed = false;
       try {
         for (const chunk of chunkArray(media, MAX_MEDIA_GROUP_SIZE)) {
           await ctx.replyWithMediaGroup(chunk);
         }
+      } catch (err) {
+        uploadFailed = true;
+        logError(err);
       } finally {
         cleanup();
         deleteMessageSafe(ctx, msg1);
         deleteMessageSafe(ctx, msg2);
       }
 
+      if (uploadFailed) {
+        await ctx.reply(
+          `images were downloaded, but Telegram rejected the upload. sending links instead.`,
+        );
+        await sendChunkedLinks(ctx, imageLinks);
+        await next();
+        return;
+      }
+
       if (userSettings.verboseOutput) {
-        await sendChunkedLinks(ctx, buildImageLinksMessages(res.variants));
+        await sendChunkedLinks(ctx, imageLinks);
       }
     } else if (res.contentType === "music") {
       const uploadedFile = res.variants.find(
@@ -187,6 +214,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         loadingMessage: msg1,
         progressText: `music downloaded, sending...`,
         fallbackText: `music was downloaded, but it exceeds ${MAX_FILE_SIZE_MB}mb and Telegram doesn't allow sending such big files.`,
+        uploadFailureText: `music was downloaded, but Telegram rejected the upload. sending links instead.`,
         uploadAction: "upload_voice",
         variants: res.variants,
         links,
