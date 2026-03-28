@@ -1,3 +1,5 @@
+import { $ } from "bun";
+
 function getTypeFromBinaryData(binaryData: Uint8Array) {
   if (
     binaryData[4] === 0x66 &&
@@ -57,4 +59,12 @@ export async function getVideoSize(video: string | File): Promise<number> {
   } else {
     return video.size;
   }
+}
+
+export async function getVideoResolution(path: string) {
+  const output =
+    await $`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of json ${path}`.text();
+  const info = JSON.parse(output);
+  const stream = info.streams?.[0];
+  return { width: +stream.width, height: +stream.height };
 }
