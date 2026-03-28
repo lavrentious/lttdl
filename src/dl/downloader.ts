@@ -17,10 +17,14 @@ const FILE_DOWNLOAD_TIMEOUT_MS = 45000;
 const FETCH_INFO_RETRIES = 1;
 const FILE_DOWNLOAD_RETRIES = 1;
 const RETRY_DELAY_MS = 300;
-const MAX_DOWNLOAD_CONCURRENCY = 3;
-const MAX_IMAGE_ENTRY_CONCURRENCY = 2;
+const MAX_DOWNLOAD_CONCURRENCY = 8;
+const MAX_IMAGE_ENTRY_CONCURRENCY = 8;
 
-async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs: number,
+  init?: RequestInit,
+): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort(new Error(`fetch timed out after ${timeoutMs}ms`));
@@ -28,11 +32,32 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Respons
 
   try {
     return await fetch(url, {
+      ...init,
       signal: controller.signal,
     });
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+async function getRemoteContentLength(url: string): Promise<number> {
+  return await retryAsync(
+    async () => {
+      const res = await fetchWithTimeout(url, FETCH_INFO_TIMEOUT_MS, {
+        method: "HEAD",
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to get content length: ${res.status}`);
+      }
+
+      return parseInt(res.headers.get("Content-Length") || "0");
+    },
+    {
+      retries: FETCH_INFO_RETRIES,
+      delayMs: RETRY_DELAY_MS,
+      shouldRetry: isRetryableNetworkError,
+    },
+  );
 }
 
 type ContentVariant<T> = {
@@ -153,6 +178,14 @@ function cleanupVariant(variant: { cleanup?: () => void }) {
   } catch {}
 }
 
+function dedupeUrls(urls: string[]): string[] {
+  return Array.from(new Set(urls));
+}
+
+function dedupeUrlGroups(urlGroups: string[][]): string[][] {
+  return urlGroups.map((group) => dedupeUrls(group));
+}
+
 function sortByResolution<T extends VideoVariant | PhotoVariant>(
   variants: T[],
 ): T[] {
@@ -167,10 +200,22 @@ function sortByResolution<T extends VideoVariant | PhotoVariant>(
 async function downloadVideoVariant(
   url: string,
   tempDir: string,
+  maxFileSize?: number,
 ): Promise<VideoVariant> {
   logger.debug(`downloading video from ${url}...`);
   let path: string | null = null;
   try {
+    if (maxFileSize !== undefined) {
+      const remoteSize = await getRemoteContentLength(url).catch(() => 0);
+      if (remoteSize > maxFileSize) {
+        logger.debug(`skipping video download from ${url} (size ${remoteSize} exceeds limit ${maxFileSize})`);
+        return {
+          downloadUrl: url,
+          downloaded: false,
+        } satisfies VideoVariant;
+      }
+    }
+
     path = await downloadFile(url, tempDir);
     const downloadedPath = path;
     logger.debug(`downloaded video to ${path}`);
@@ -249,10 +294,22 @@ async function downloadMusicVariant(
   url: string,
   tempDir: string,
   contentName: string | null,
+  maxFileSize?: number,
 ): Promise<MusicVariant> {
   logger.debug(`downloading music from ${url}...`);
   let path: string | null = null;
   try {
+    if (maxFileSize !== undefined) {
+      const remoteSize = await getRemoteContentLength(url).catch(() => 0);
+      if (remoteSize > maxFileSize) {
+        logger.debug(`skipping music download from ${url} (size ${remoteSize} exceeds limit ${maxFileSize})`);
+        return {
+          downloaded: false,
+          downloadUrl: url,
+        } satisfies MusicVariant;
+      }
+    }
+
     path = await downloadFile(url, tempDir);
     const downloadedPath = path;
     logger.debug(`downloaded music to ${path}`);
@@ -343,7 +400,7 @@ async function resolveDownloadInfo(
   fetchers = fetchers.filter((f) => f.getType() === contentType);
 
   const contentName = fetchers.map((f) => f.getName()).find((n) => !!n) || null;
-  const urls = zipArrays(fetchers.map((f) => f.getLinks()!));
+  const urls = dedupeUrlGroups(zipArrays(fetchers.map((f) => f.getLinks()!)));
   if (!urls.length) {
     throw new DownloadError("could not get download links");
   }
@@ -378,12 +435,17 @@ export async function downloadTiktok(
         await mapWithConcurrency(
           urls[0]!,
           MAX_DOWNLOAD_CONCURRENCY,
-          async (variantUrl) => await downloadVideoVariant(variantUrl, tempDir),
+          async (variantUrl) =>
+            await downloadVideoVariant(variantUrl, tempDir, maxFileSize),
         ),
       );
     } else {
       for (const variantUrl of urls[0]!) {
-        const variant = await downloadVideoVariant(variantUrl, tempDir);
+        const variant = await downloadVideoVariant(
+          variantUrl,
+          tempDir,
+          maxFileSize,
+        );
         variants.push(variant);
         if (
           variant.downloaded &&
@@ -445,7 +507,12 @@ export async function downloadTiktok(
           urls[0]!,
           MAX_DOWNLOAD_CONCURRENCY,
           async (variantUrl) =>
-            await downloadMusicVariant(variantUrl, tempDir, contentName),
+            await downloadMusicVariant(
+              variantUrl,
+              tempDir,
+              contentName,
+              maxFileSize,
+            ),
         )),
       );
     } else {
@@ -454,6 +521,7 @@ export async function downloadTiktok(
           variantUrl,
           tempDir,
           contentName,
+          maxFileSize,
         );
         variants.push(variant);
         if (
