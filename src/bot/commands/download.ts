@@ -6,13 +6,16 @@ import {
   type MiddlewareFn,
 } from "grammy";
 import {
-  DownloadSource,
   downloadTiktok,
   type MusicVariant,
   type PhotoVariant,
   type VideoVariant,
 } from "src/dl/downloader";
 import { DownloadError } from "src/errors/download-error";
+import {
+  getDefaultUserSettings,
+  getUserSettings,
+} from "src/settings/user-settings";
 import { chunkArray } from "src/utils/array";
 import { logError, logger } from "src/utils/logger";
 import { fileSizeToHumanReadable, isHttpURL } from "src/utils/utils";
@@ -112,13 +115,15 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
   }
 
   const msg1 = await ctx.reply(`downloading...`);
+  const userSettings = ctx.from
+    ? getUserSettings(ctx.from.id)
+    : getDefaultUserSettings();
 
   try {
-    const { res, cleanup } = await downloadTiktok(query, [
-      DownloadSource.V1,
-      DownloadSource.V2,
-      // DownloadSource.V3,
-    ]);
+    const { res, cleanup } = await downloadTiktok(
+      query,
+      userSettings.downloadSources,
+    );
     if (!res) {
       logger.error(`failed to download tiktok from ${query} (no result)`);
       await ctx.reply("failed to download");
@@ -136,6 +141,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
 
       if (res.variants.length && !validFiles.length) {
         logger.warn(`no valid files found for ${query} (max size exceeded)`);
+        ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
         await ctx.reply(
           `video was downloaded, but it exceeds ${MAX_FILE_SIZE_MB}mb and Telegram doesn't allow sending such big files.`,
         );
@@ -160,14 +166,16 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
           ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
           ctx.api.deleteMessage(msg2.chat.id, msg2.message_id).catch();
         });
-      await sendChunkedLinks(ctx, [
-        `main link (best quality):\n${links[0]}` +
-          (links.length > 1
-            ? `\n\nother links:\n${links.slice(1).join("\n")}`
-            : ""),
-      ]);
+      if (userSettings.verboseOutput) {
+        await sendChunkedLinks(ctx, [
+          `main link (best quality):\n${links[0]}` +
+            (links.length > 1
+              ? `\n\nother links:\n${links.slice(1).join("\n")}`
+              : ""),
+        ]);
+      }
 
-      logger.info(`sent video ${query} to ${ctx.from.id}`);
+      logger.info(`sent video ${query} to ${ctx.from?.id ?? "unknown user"}`);
     } else if (res.contentType === "image") {
       const msg2 = await ctx.reply(
         res.variants.length > 1
@@ -199,7 +207,9 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       cleanup();
       ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
       ctx.api.deleteMessage(msg2.chat.id, msg2.message_id).catch();
-      await sendChunkedLinks(ctx, links);
+      if (userSettings.verboseOutput) {
+        await sendChunkedLinks(ctx, links);
+      }
     } else if (res.contentType === "music") {
       const validFiles = res.variants
         .filter((file) => file.downloaded)
@@ -210,6 +220,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
 
       if (res.variants.length && !validFiles.length) {
         logger.warn(`no valid files found for ${query} (max size exceeded)`);
+        ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
         await ctx.reply(
           `music was downloaded, but it exceeds ${MAX_FILE_SIZE_MB}mb and Telegram doesn't allow sending such big files.`,
         );
@@ -236,14 +247,16 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
           ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
           ctx.api.deleteMessage(msg2.chat.id, msg2.message_id).catch();
         });
-      await sendChunkedLinks(ctx, [
-        `main link (best quality):\n${links[0]}` +
-          (links.length > 1
-            ? `\n\nother links:\n${links.slice(1).join("\n")}`
-            : ""),
-      ]);
+      if (userSettings.verboseOutput) {
+        await sendChunkedLinks(ctx, [
+          `main link (best quality):\n${links[0]}` +
+            (links.length > 1
+              ? `\n\nother links:\n${links.slice(1).join("\n")}`
+              : ""),
+        ]);
+      }
 
-      logger.info(`sent audio ${query} to ${ctx.from.id}`);
+      logger.info(`sent audio ${query} to ${ctx.from?.id ?? "unknown user"}`);
     }
 
     await next();

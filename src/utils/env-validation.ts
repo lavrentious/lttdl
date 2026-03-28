@@ -4,6 +4,7 @@ export const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]),
   BOT_TOKEN: z.string(),
   TEMP_DIR: z.string().default("./temp"),
+  DB_PATH: z.string().default("./data/app.db"),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -1,6 +1,8 @@
 import { Bot } from "grammy";
+import { settingsCallbackQuery, settingsCommand } from "./commands/settings";
 import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
+import { initUserSettingsDb } from "src/settings/user-settings";
 import { downloadCommand } from "./commands/download";
 
 function startupCheck() {
@@ -16,6 +18,7 @@ function startupCheck() {
 
 export function initBot() {
   startupCheck();
+  initUserSettingsDb();
 
   const bot = new Bot(config.get("BOT_TOKEN"));
 
@@ -23,9 +26,12 @@ export function initBot() {
     ctx.reply(
       "hi.\n" +
         "this is a bot for downloading tiktoks without watermarks. no ads, no spam, no sponsors.\n" +
-        "send a tiktok link and get the video.",
+        "send a tiktok link and get the video/photos/music.\n" +
+        "use /settings to configure verbose output and download sources.",
     ),
   );
+  bot.command("settings", settingsCommand);
+  bot.callbackQuery(/^settings:/, settingsCallbackQuery);
   bot.on("message", downloadCommand);
 
   bot.catch(logError);

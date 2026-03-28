@@ -60,6 +60,11 @@ export enum DownloadSource {
   V2 = "v2",
   V3 = "v3",
 }
+export const ALL_DOWNLOAD_SOURCES = [
+  DownloadSource.V1,
+  DownloadSource.V2,
+  DownloadSource.V3,
+] as const;
 const fetcherMap = {
   [DownloadSource.V1]: V1Fetcher,
   [DownloadSource.V2]: V2Fetcher,
