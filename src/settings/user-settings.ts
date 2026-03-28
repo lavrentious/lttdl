@@ -126,7 +126,7 @@ export function updateUserVerboseOutput(
     .run(
       userId,
       Number(verboseOutput),
-      JSON.stringify(getUserSettings(userId).downloadSources),
+      JSON.stringify(DEFAULT_USER_SETTINGS.downloadSources),
     );
 
   return getUserSettings(userId);
@@ -150,7 +150,7 @@ export function updateUserDownloadSources(
     )
     .run(
       userId,
-      Number(getUserSettings(userId).verboseOutput),
+      Number(DEFAULT_USER_SETTINGS.verboseOutput),
       JSON.stringify(normalizedSources),
     );
 

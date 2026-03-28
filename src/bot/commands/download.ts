@@ -25,18 +25,63 @@ const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 const MAX_MEDIA_GROUP_SIZE = 10;
 const MAX_MSG_LENGTH = 4000;
 
+function splitLinkBlock(block: string): string[] {
+  if (block.length <= MAX_MSG_LENGTH) {
+    return [block];
+  }
+
+  const chunks: string[] = [];
+  let currentChunk = "";
+
+  for (const line of block.split("\n")) {
+    if (line.length > MAX_MSG_LENGTH) {
+      if (currentChunk) {
+        chunks.push(currentChunk);
+        currentChunk = "";
+      }
+
+      for (let i = 0; i < line.length; i += MAX_MSG_LENGTH) {
+        chunks.push(line.slice(i, i + MAX_MSG_LENGTH));
+      }
+      continue;
+    }
+
+    if (!currentChunk) {
+      currentChunk = line;
+      continue;
+    }
+
+    if (currentChunk.length + line.length + 1 > MAX_MSG_LENGTH) {
+      chunks.push(currentChunk);
+      currentChunk = line;
+      continue;
+    }
+
+    currentChunk = `${currentChunk}\n${line}`;
+  }
+
+  if (currentChunk) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
 async function sendChunkedLinks(
   ctx: Filter<Context, "message">,
   linkBlocks: string[],
 ): Promise<void> {
+  const normalizedBlocks = linkBlocks.flatMap(splitLinkBlock);
   let currentMsg = "";
 
-  for (const linkBlock of linkBlocks) {
+  for (const linkBlock of normalizedBlocks) {
     if (currentMsg.length + linkBlock.length + 2 > MAX_MSG_LENGTH) {
-      await ctx.reply(currentMsg, {
-        parse_mode: "HTML",
-        link_preview_options: { is_disabled: true },
-      });
+      if (currentMsg) {
+        await ctx.reply(currentMsg, {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+        });
+      }
       currentMsg = linkBlock;
       continue;
     }
@@ -64,7 +109,7 @@ function generateVideoLinksEntry(
         : "")
     );
   }
-  return `<a href="${variant.downloadUrl}">?x?</a>`;
+  return `<a href="${variant.downloadUrl}">?x?</a> - ? MB <i>(download failed)</i>`;
 }
 
 function generatePhotosLinksEntry(
@@ -104,6 +149,74 @@ function generateMusicLinksEntry(
   return `<a href="${variant.downloadUrl}">? MB</a>`;
 }
 
+function deleteMessageSafe(
+  ctx: Filter<Context, "message">,
+  message?: { chat: { id: number }; message_id: number },
+) {
+  if (!message) return;
+  ctx.api.deleteMessage(message.chat.id, message.message_id).catch();
+}
+
+function buildSingleMediaLinksMessage(links: string[]): string {
+  return (
+    `selected link:\n${links[0]}` +
+    (links.length > 1
+      ? `\n\nother attempted links:\n${links.slice(1).join("\n")}`
+      : "")
+  );
+}
+
+async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
+  ctx,
+  loadingMessage,
+  progressText,
+  fallbackText,
+  uploadAction,
+  variants,
+  links,
+  verboseOutput,
+  cleanup,
+  sendMedia,
+}: {
+  ctx: Filter<Context, "message">;
+  loadingMessage: { chat: { id: number }; message_id: number };
+  progressText: string;
+  fallbackText: string;
+  uploadAction: "upload_video" | "upload_voice";
+  variants: T[];
+  links: string[];
+  verboseOutput: boolean;
+  cleanup: () => void;
+  sendMedia: (variant: Extract<T, { downloaded: true }>) => Promise<unknown>;
+}): Promise<void> {
+  const validFiles = variants
+    .filter((file): file is Extract<T, { downloaded: true }> => file.downloaded)
+    .filter((file) => file.size <= MAX_FILE_SIZE);
+
+  if (!validFiles.length) {
+    logger.warn(`no valid files found (max size exceeded or download failed)`);
+    deleteMessageSafe(ctx, loadingMessage);
+    await ctx.reply(fallbackText);
+    await sendChunkedLinks(ctx, links);
+    cleanup();
+    return;
+  }
+
+  const progressMessage = await ctx.reply(progressText);
+  try {
+    await ctx.api.sendChatAction(loadingMessage.chat.id, uploadAction);
+    await sendMedia(validFiles[0]!);
+  } finally {
+    cleanup();
+    deleteMessageSafe(ctx, loadingMessage);
+    deleteMessageSafe(ctx, progressMessage);
+  }
+
+  if (verboseOutput) {
+    await sendChunkedLinks(ctx, [buildSingleMediaLinksMessage(links)]);
+  }
+}
+
 export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
   ctx,
   next,
@@ -118,11 +231,16 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
   const userSettings = ctx.from
     ? getUserSettings(ctx.from.id)
     : getDefaultUserSettings();
+  const downloadStrategy = userSettings.verboseOutput ? "all" : "single";
 
   try {
     const { res, cleanup } = await downloadTiktok(
       query,
       userSettings.downloadSources,
+      {
+        strategy: downloadStrategy,
+        maxFileSize: MAX_FILE_SIZE,
+      },
     );
     if (!res) {
       logger.error(`failed to download tiktok from ${query} (no result)`);
@@ -132,48 +250,25 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     }
 
     if (res.contentType === "video") {
-      const validFiles = res.variants
-        .filter((file) => file.downloaded)
-        .filter((file) => file.size <= MAX_FILE_SIZE); // telegram forbids uploading files >= 50mb
+      const uploadedFile = res.variants.find(
+        (file): file is Extract<VideoVariant, { downloaded: true }> =>
+          file.downloaded && file.size <= MAX_FILE_SIZE,
+      );
       const links = res.variants.map((file) =>
-        generateVideoLinksEntry(file, validFiles[0]),
+        generateVideoLinksEntry(file, uploadedFile),
       );
-
-      if (res.variants.length && !validFiles.length) {
-        logger.warn(`no valid files found for ${query} (max size exceeded)`);
-        ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
-        await ctx.reply(
-          `video was downloaded, but it exceeds ${MAX_FILE_SIZE_MB}mb and Telegram doesn't allow sending such big files.`,
-        );
-        await sendChunkedLinks(ctx, links);
-        try {
-          cleanup();
-        } catch {}
-        await next();
-        return;
-      }
-
-      const msg2 = await ctx.reply(
-        `video downloaded, sending... (${validFiles.length} version${validFiles.length > 1 ? "s" : ""})`,
-      );
-      await ctx.api.sendChatAction(msg1.chat.id, "upload_video");
-      await ctx
-        .replyWithVideo(new InputFile(validFiles[0]!.path))
-        .finally(() => {
-          try {
-            cleanup();
-          } catch {}
-          ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
-          ctx.api.deleteMessage(msg2.chat.id, msg2.message_id).catch();
-        });
-      if (userSettings.verboseOutput) {
-        await sendChunkedLinks(ctx, [
-          `main link (best quality):\n${links[0]}` +
-            (links.length > 1
-              ? `\n\nother links:\n${links.slice(1).join("\n")}`
-              : ""),
-        ]);
-      }
+      await sendSingleMediaResult({
+        ctx,
+        loadingMessage: msg1,
+        progressText: `video downloaded, sending...`,
+        fallbackText: `video was downloaded, but it exceeds ${MAX_FILE_SIZE_MB}mb and Telegram doesn't allow sending such big files.`,
+        uploadAction: "upload_video",
+        variants: res.variants,
+        links,
+        verboseOutput: userSettings.verboseOutput,
+        cleanup,
+        sendMedia: (variant) => ctx.replyWithVideo(new InputFile(variant.path)),
+      });
 
       logger.info(`sent video ${query} to ${ctx.from?.id ?? "unknown user"}`);
     } else if (res.contentType === "image") {
@@ -194,67 +289,50 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             ),
           );
         });
-      for (const chunk of chunkArray(media, MAX_MEDIA_GROUP_SIZE)) {
-        await ctx.replyWithMediaGroup(chunk);
+      try {
+        for (const chunk of chunkArray(media, MAX_MEDIA_GROUP_SIZE)) {
+          await ctx.replyWithMediaGroup(chunk);
+        }
+      } finally {
+        cleanup();
+        deleteMessageSafe(ctx, msg1);
+        deleteMessageSafe(ctx, msg2);
       }
 
-      const links = res.variants.map(
-        (img, i) =>
-          `image ${i}:\n` +
-          generatePhotosLinksEntry(img, img.filter((v) => v.downloaded)[0]),
-      );
-
-      cleanup();
-      ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
-      ctx.api.deleteMessage(msg2.chat.id, msg2.message_id).catch();
       if (userSettings.verboseOutput) {
-        await sendChunkedLinks(ctx, links);
+        await sendChunkedLinks(
+          ctx,
+          res.variants.map(
+            (img, i) =>
+              `image ${i + 1}:\n` +
+              generatePhotosLinksEntry(
+                img,
+                img.find((variant) => variant.downloaded),
+              ),
+          ),
+        );
       }
     } else if (res.contentType === "music") {
-      const validFiles = res.variants
-        .filter((file) => file.downloaded)
-        .filter((file) => file.size <= MAX_FILE_SIZE); // telegram forbids uploading files >= 50mb
+      const uploadedFile = res.variants.find(
+        (file): file is Extract<MusicVariant, { downloaded: true }> =>
+          file.downloaded && file.size <= MAX_FILE_SIZE,
+      );
       const links = res.variants.map((file) =>
-        generateMusicLinksEntry(file, validFiles[0]),
+        generateMusicLinksEntry(file, uploadedFile),
       );
-
-      if (res.variants.length && !validFiles.length) {
-        logger.warn(`no valid files found for ${query} (max size exceeded)`);
-        ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
-        await ctx.reply(
-          `music was downloaded, but it exceeds ${MAX_FILE_SIZE_MB}mb and Telegram doesn't allow sending such big files.`,
-        );
-        await sendChunkedLinks(ctx, links);
-        try {
-          cleanup();
-        } catch {}
-        await next();
-        return;
-      }
-
-      const msg2 = await ctx.reply(
-        `music downloaded, sending... (${validFiles.length} version${validFiles.length > 1 ? "s" : ""})`,
-      );
-      await ctx.api.sendChatAction(msg1.chat.id, "upload_voice");
-      await ctx
-        .replyWithAudio(
-          new InputFile(validFiles[0]!.path, validFiles[0]!.payload.name),
-        )
-        .finally(() => {
-          try {
-            cleanup();
-          } catch {}
-          ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
-          ctx.api.deleteMessage(msg2.chat.id, msg2.message_id).catch();
-        });
-      if (userSettings.verboseOutput) {
-        await sendChunkedLinks(ctx, [
-          `main link (best quality):\n${links[0]}` +
-            (links.length > 1
-              ? `\n\nother links:\n${links.slice(1).join("\n")}`
-              : ""),
-        ]);
-      }
+      await sendSingleMediaResult({
+        ctx,
+        loadingMessage: msg1,
+        progressText: `music downloaded, sending...`,
+        fallbackText: `music was downloaded, but it exceeds ${MAX_FILE_SIZE_MB}mb and Telegram doesn't allow sending such big files.`,
+        uploadAction: "upload_voice",
+        variants: res.variants,
+        links,
+        verboseOutput: userSettings.verboseOutput,
+        cleanup,
+        sendMedia: (variant) =>
+          ctx.replyWithAudio(new InputFile(variant.path, variant.payload.name)),
+      });
 
       logger.info(`sent audio ${query} to ${ctx.from?.id ?? "unknown user"}`);
     }

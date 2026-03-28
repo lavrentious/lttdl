@@ -11,8 +11,8 @@ import { V1Fetcher } from "./fetcher/v1-fetcher";
 import { V2Fetcher } from "./fetcher/v2-fetcher";
 import { V3Fetcher } from "./fetcher/v3-fetcher";
 
-const MAX_FILE_SIZE_MB = 50;
-const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
+const FETCH_INFO_TIMEOUT_MS = 15000;
+const FILE_DOWNLOAD_TIMEOUT_MS = 45000;
 
 type ContentVariant<T> = {
   downloadUrl: string;
@@ -45,7 +45,9 @@ async function downloadFile(url: string, dir?: string, name?: string) {
   if (!dir) dir = config.get("TEMP_DIR");
   if (!name) name = randomUUIDv7();
   const outputPath = path.join(dir, name);
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(FILE_DOWNLOAD_TIMEOUT_MS),
+  });
   if (!res.ok) {
     throw new Error(`Failed to download: ${res.status}`);
   }
@@ -53,6 +55,28 @@ async function downloadFile(url: string, dir?: string, name?: string) {
   const arrayBuffer = await res.arrayBuffer();
   await Bun.write(outputPath, arrayBuffer, { createPath: true });
   return outputPath;
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timeoutId: Timer | null = null;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 export enum DownloadSource {
@@ -83,158 +107,315 @@ type DownloadResult =
       contentType: "music";
       variants: MusicVariant[];
     };
-export async function downloadTiktok(
+export type DownloadStrategy = "all" | "single";
+
+type DownloadOptions = {
+  tempDir?: string;
+  strategy?: DownloadStrategy;
+  maxFileSize?: number;
+};
+
+type DownloadContentType = DownloadResult["contentType"];
+
+type ResolvedDownloadInfo = {
+  contentType: DownloadContentType;
+  contentName: string | null;
+  urls: string[][];
+};
+
+function cleanupVariant(variant: { cleanup?: () => void }) {
+  try {
+    variant.cleanup?.();
+  } catch {}
+}
+
+function sortByResolution<
+  T extends VideoVariant | PhotoVariant,
+>(variants: T[]): T[] {
+  return [...variants].sort((a, b) =>
+    a.downloaded && b.downloaded
+      ? b.payload.resolution.width * b.payload.resolution.height -
+        a.payload.resolution.width * a.payload.resolution.height
+      : 0,
+  );
+}
+
+async function downloadVideoVariant(
   url: string,
-  downloadSources?: DownloadSource[],
-  tempDir?: string,
-): Promise<{ res: DownloadResult | null; cleanup: () => void }> {
-  if (!tempDir) {
-    tempDir = config.get("TEMP_DIR");
+  tempDir: string,
+): Promise<VideoVariant> {
+  logger.debug(`downloading video from ${url}...`);
+  let path: string | null = null;
+  try {
+    path = await downloadFile(url, tempDir);
+    const downloadedPath = path;
+    logger.debug(`downloaded video to ${path}`);
+    logger.debug(`getting video resolution for ${path}...`);
+    const resolution = await getVideoResolution(path);
+    logger.debug(`resolution: ${JSON.stringify(resolution)}`);
+
+    return {
+      payload: { resolution },
+      downloaded: true,
+      downloadUrl: url,
+      path: downloadedPath,
+      size: Bun.file(downloadedPath).size,
+      cleanup: () => {
+        Bun.file(downloadedPath).delete().catch();
+      },
+    } satisfies VideoVariant;
+  } catch {
+    if (path) {
+      Bun.file(path).delete().catch();
+    }
+    logger.warn(`failed to download video from ${url}...`);
+    return {
+      downloadUrl: url,
+      downloaded: false,
+    } satisfies VideoVariant;
+  }
+}
+
+async function downloadPhotoVariant(
+  url: string,
+  tempDir: string,
+): Promise<PhotoVariant> {
+  logger.debug(`downloading image from ${url}...`);
+  let path: string | null = null;
+  let newPath: string | null = null;
+  try {
+    path = await downloadFile(url, tempDir);
+    logger.debug(`downloaded image to ${path}`);
+    newPath = path + ".jpg";
+    const downloadedPath = path;
+    const recodedPath = newPath;
+    logger.debug(`recoding image at ${path} to jpeg...`);
+    await recodeImageToJpeg(path, newPath);
+    logger.debug(`getting image resolution for ${newPath}...`);
+    const resolution = await getImageResolution(newPath);
+    logger.debug(`resolution: ${JSON.stringify(resolution)}`);
+
+    return {
+      payload: { resolution },
+      downloaded: true,
+      downloadUrl: url,
+      path: recodedPath,
+      size: Bun.file(recodedPath).size,
+      cleanup: () => {
+        Bun.file(downloadedPath).delete().catch();
+        Bun.file(recodedPath).delete().catch();
+      },
+    } satisfies PhotoVariant;
+  } catch {
+    if (path) {
+      Bun.file(path).delete().catch();
+    }
+    if (newPath) {
+      Bun.file(newPath).delete().catch();
+    }
+    logger.warn(`failed to download image from ${url}`);
+    return {
+      downloaded: false,
+      downloadUrl: url,
+    } satisfies PhotoVariant;
+  }
+}
+
+async function downloadMusicVariant(
+  url: string,
+  tempDir: string,
+  contentName: string | null,
+): Promise<MusicVariant> {
+  logger.debug(`downloading music from ${url}...`);
+  let path: string | null = null;
+  try {
+    path = await downloadFile(url, tempDir);
+    const downloadedPath = path;
+    logger.debug(`downloaded music to ${path}`);
+
+    return {
+      downloaded: true,
+      downloadUrl: url,
+      path: downloadedPath,
+      size: Bun.file(downloadedPath).size,
+      payload: { name: contentName || undefined },
+      cleanup: () => {
+        Bun.file(downloadedPath).delete().catch();
+      },
+    } satisfies MusicVariant;
+  } catch {
+    if (path) {
+      Bun.file(path).delete().catch();
+    }
+    logger.warn(`failed to download music from ${url}`);
+    return {
+      downloaded: false,
+      downloadUrl: url,
+    } satisfies MusicVariant;
+  }
+}
+
+function pickContentType(fetchers: Fetcher[]): DownloadContentType {
+  const counts = new Map<DownloadContentType, number>();
+
+  for (const fetcher of fetchers) {
+    const type = fetcher.getType();
+    if (!type) continue;
+    counts.set(type, (counts.get(type) || 0) + 1);
   }
 
-  logger.debug(`downloading tiktok from ${url}...`);
+  let bestType: DownloadContentType | null = null;
+  let bestCount = -1;
+  for (const fetcher of fetchers) {
+    const type = fetcher.getType();
+    if (!type) continue;
+    const count = counts.get(type) || 0;
+    if (count > bestCount) {
+      bestType = type;
+      bestCount = count;
+    }
+  }
 
+  if (!bestType) {
+    throw new DownloadError("could not detect content type");
+  }
+
+  return bestType;
+}
+
+async function resolveDownloadInfo(
+  url: string,
+  downloadSources?: DownloadSource[],
+): Promise<ResolvedDownloadInfo> {
   const fetcherClasses = downloadSources
     ? Array.from(new Set(downloadSources)).map((v) => fetcherMap[v])
     : Object.values(fetcherMap);
   let fetchers = fetcherClasses.map((C) => new C(url));
 
-  await Promise.allSettled(fetchers.map(async (f) => await f.fetchInfo()));
+  await Promise.allSettled(
+    fetchers.map(async (f) =>
+      await withTimeout(
+        f.fetchInfo(),
+        FETCH_INFO_TIMEOUT_MS,
+        `${f.constructor.name} fetchInfo`,
+      ),
+    ),
+  );
   if (fetchers.every((f) => !f.isSuccessful())) {
     throw new DownloadError("all download sources failed");
   }
+
   fetchers = fetchers.filter((f) => f.getType() !== null);
-  const fetchedTypes = fetchers.map((f) => f.getType());
+  const contentType = pickContentType(fetchers);
+  fetchers = fetchers.filter((f) => f.getType() === contentType);
 
-  if (Array.from(new Set(fetchedTypes)).length !== 1) {
-    throw new DownloadError("could not detect content type");
-  }
-  const contentType = fetchedTypes[0]!;
-  const contentName = fetchers.map((f) => f.getName()).find((n) => !!n);
-
+  const contentName = fetchers.map((f) => f.getName()).find((n) => !!n) || null;
   const urls = zipArrays(fetchers.map((f) => f.getLinks()!));
   if (!urls.length) {
     throw new DownloadError("could not get download links");
   }
 
+  return {
+    contentType,
+    contentName,
+    urls,
+  };
+}
+
+export async function downloadTiktok(
+  url: string,
+  downloadSources?: DownloadSource[],
+  options: DownloadOptions = {},
+): Promise<{ res: DownloadResult | null; cleanup: () => void }> {
+  logger.debug(`downloading tiktok from ${url}...`);
+  const tempDir = options.tempDir || config.get("TEMP_DIR");
+  const strategy = options.strategy || "all";
+  const maxFileSize = options.maxFileSize;
+  const { contentType, contentName, urls } = await resolveDownloadInfo(
+    url,
+    downloadSources,
+  );
+
   let res: DownloadResult | null = null;
   if (contentType === "video") {
-    const variants = (
-      (await Promise.all(
-        urls[0]!.map(async (url) => {
-          logger.debug(`downloading video from ${url}...`);
-          try {
-            const path = await downloadFile(url);
-            logger.debug(`downloaded video to ${path}`);
-            logger.debug(`getting video resolution for ${path}...`);
-            const res = await getVideoResolution(path);
-            logger.debug(`resolution: ${JSON.stringify(res)}`);
+    let variants: VideoVariant[] = [];
 
-            return {
-              payload: { resolution: res },
-              downloaded: true,
-              downloadUrl: url,
-              path,
-              size: Bun.file(path).size,
-              cleanup: () => {
-                Bun.file(path).delete().catch();
-              },
-            } satisfies VideoVariant;
-          } catch {
-            logger.warn(`failed to download video from ${url}...`);
-            return {
-              downloadUrl: url,
-              downloaded: false,
-            } satisfies VideoVariant;
-          }
-        }),
-      )) as VideoVariant[]
-    ).sort((a, b) =>
-      a.downloaded && b.downloaded
-        ? b.payload.resolution.width * b.payload.resolution.height -
-          a.payload.resolution.width * a.payload.resolution.height
-        : 0,
-    );
+    if (strategy === "all") {
+      variants = sortByResolution(
+        await Promise.all(urls[0]!.map((variantUrl) => downloadVideoVariant(variantUrl, tempDir))),
+      );
+    } else {
+      for (const variantUrl of urls[0]!) {
+        const variant = await downloadVideoVariant(variantUrl, tempDir);
+        variants.push(variant);
+        if (
+          variant.downloaded &&
+          (maxFileSize === undefined || variant.size <= maxFileSize)
+        ) {
+          break;
+        }
+      }
+    }
+
     res = {
       contentType: "video",
       variants,
     };
   } else if (contentType === "image") {
     const variants = await Promise.all(
-      urls.map(async (img) =>
-        (
-          (await Promise.all(
-            img.map(async (url) => {
-              logger.debug(`downloading image from ${url}...`);
-              try {
-                const path = await downloadFile(url);
-                logger.debug(`downloaded image to ${path}`);
-                const newPath = path + ".jpg";
-                logger.debug(`recoding image at ${path} to jpeg...`);
-                await recodeImageToJpeg(path, newPath);
-                logger.debug(`getting image resolution for ${newPath}...`);
-                const res = await getImageResolution(newPath);
-                logger.debug(`resolution: ${JSON.stringify(res)}`);
+      urls.map(async (img) => {
+        if (strategy === "all") {
+          return sortByResolution(
+            await Promise.all(img.map((imageUrl) => downloadPhotoVariant(imageUrl, tempDir))),
+          );
+        }
 
-                return {
-                  payload: { resolution: res },
-                  downloaded: true,
-                  downloadUrl: url,
-                  path: newPath,
-                  size: Bun.file(newPath).size,
-                  cleanup: () => {
-                    Bun.file(path).delete().catch();
-                    Bun.file(newPath).delete().catch();
-                  },
-                } satisfies PhotoVariant;
-              } catch {
-                logger.warn(`failed to download image from ${url}`);
-                return {
-                  downloaded: false,
-                  downloadUrl: url,
-                } satisfies PhotoVariant;
-              }
-            }),
-          )) as PhotoVariant[]
-        ).sort((a, b) =>
-          a.downloaded && b.downloaded
-            ? b.payload.resolution.width * b.payload.resolution.height -
-              a.payload.resolution.width * a.payload.resolution.height
-            : 0,
-        ),
-      ),
+        const attempted: PhotoVariant[] = [];
+        for (const imageUrl of img) {
+          const variant = await downloadPhotoVariant(imageUrl, tempDir);
+          attempted.push(variant);
+          if (variant.downloaded) {
+            return attempted;
+          }
+        }
+
+        return attempted.length
+          ? attempted
+          : [{ downloaded: false, downloadUrl: img[0]! } satisfies PhotoVariant];
+      }),
     );
     res = {
       contentType: "image",
       variants,
     };
   } else if (contentType === "music") {
-    const variants = (await Promise.all(
-      urls[0]!.map(async (url) => {
-        logger.debug(`downloading music from ${url}...`);
-        try {
-          const path = await downloadFile(url);
-          logger.debug(`downloaded music to ${path}`);
+    const variants: MusicVariant[] = [];
 
-          return {
-            downloaded: true,
-            downloadUrl: url,
-            path,
-            size: Bun.file(path).size,
-            payload: { name: contentName || undefined },
-            cleanup: () => {
-              Bun.file(path).delete().catch();
-            },
-          } satisfies MusicVariant;
-        } catch {
-          logger.warn(`failed to download music from ${url}`);
-          return {
-            downloaded: false,
-            downloadUrl: url,
-          } satisfies MusicVariant;
+    if (strategy === "all") {
+      variants.push(
+        ...(await Promise.all(
+          urls[0]!.map((variantUrl) =>
+            downloadMusicVariant(variantUrl, tempDir, contentName),
+          ),
+        )),
+      );
+    } else {
+      for (const variantUrl of urls[0]!) {
+        const variant = await downloadMusicVariant(
+          variantUrl,
+          tempDir,
+          contentName,
+        );
+        variants.push(variant);
+        if (
+          variant.downloaded &&
+          (maxFileSize === undefined || variant.size <= maxFileSize)
+        ) {
+          break;
         }
-      }),
-    )) as MusicVariant[];
+      }
+    }
+
     res = {
       contentType: "music",
       variants,
@@ -243,7 +424,7 @@ export async function downloadTiktok(
   return {
     res,
     cleanup: () => {
-      res?.variants.flat(1).map((v) => v.cleanup?.());
+      res?.variants.flat(1).forEach(cleanupVariant);
     },
   };
 }
