@@ -8,9 +8,15 @@ import {
 import {
   downloadTiktok,
   type MusicVariant,
-  type PhotoVariant,
   type VideoVariant,
 } from "src/dl/downloader";
+import {
+  buildImageLinksMessages,
+  buildSingleMediaLinksMessage,
+  generateMusicLinksEntry,
+  generateVideoLinksEntry,
+  sendChunkedLinks,
+} from "./download-presentation";
 import { DownloadError } from "src/errors/download-error";
 import {
   getDefaultUserSettings,
@@ -18,136 +24,11 @@ import {
 } from "src/settings/user-settings";
 import { chunkArray } from "src/utils/array";
 import { logError, logger } from "src/utils/logger";
-import { fileSizeToHumanReadable, isHttpURL } from "src/utils/utils";
+import { isHttpURL } from "src/utils/utils";
 
 const MAX_FILE_SIZE_MB = 50;
 const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 const MAX_MEDIA_GROUP_SIZE = 10;
-const MAX_MSG_LENGTH = 4000;
-
-function splitLinkBlock(block: string): string[] {
-  if (block.length <= MAX_MSG_LENGTH) {
-    return [block];
-  }
-
-  const chunks: string[] = [];
-  let currentChunk = "";
-
-  for (const line of block.split("\n")) {
-    if (line.length > MAX_MSG_LENGTH) {
-      if (currentChunk) {
-        chunks.push(currentChunk);
-        currentChunk = "";
-      }
-
-      for (let i = 0; i < line.length; i += MAX_MSG_LENGTH) {
-        chunks.push(line.slice(i, i + MAX_MSG_LENGTH));
-      }
-      continue;
-    }
-
-    if (!currentChunk) {
-      currentChunk = line;
-      continue;
-    }
-
-    if (currentChunk.length + line.length + 1 > MAX_MSG_LENGTH) {
-      chunks.push(currentChunk);
-      currentChunk = line;
-      continue;
-    }
-
-    currentChunk = `${currentChunk}\n${line}`;
-  }
-
-  if (currentChunk) {
-    chunks.push(currentChunk);
-  }
-
-  return chunks;
-}
-
-async function sendChunkedLinks(
-  ctx: Filter<Context, "message">,
-  linkBlocks: string[],
-): Promise<void> {
-  const normalizedBlocks = linkBlocks.flatMap(splitLinkBlock);
-  let currentMsg = "";
-
-  for (const linkBlock of normalizedBlocks) {
-    if (currentMsg.length + linkBlock.length + 2 > MAX_MSG_LENGTH) {
-      if (currentMsg) {
-        await ctx.reply(currentMsg, {
-          parse_mode: "HTML",
-          link_preview_options: { is_disabled: true },
-        });
-      }
-      currentMsg = linkBlock;
-      continue;
-    }
-
-    currentMsg = currentMsg ? `${currentMsg}\n\n${linkBlock}` : linkBlock;
-  }
-
-  if (currentMsg) {
-    await ctx.reply(currentMsg, {
-      parse_mode: "HTML",
-      link_preview_options: { is_disabled: true },
-    });
-  }
-}
-
-function generateVideoLinksEntry(
-  variant: VideoVariant,
-  best?: VideoVariant,
-): string {
-  if (variant.downloaded) {
-    return (
-      `<a href="${variant.downloadUrl}">${variant.payload.resolution.width}x${variant.payload.resolution.height}</a> - ${fileSizeToHumanReadable(variant.size)}` +
-      (best?.downloaded && variant.path === best.path
-        ? " ← <i>this version</i>"
-        : "")
-    );
-  }
-  return `<a href="${variant.downloadUrl}">?x?</a> - ? MB <i>(download failed)</i>`;
-}
-
-function generatePhotosLinksEntry(
-  imgVariants: PhotoVariant[],
-  best?: PhotoVariant,
-): string {
-  return imgVariants
-    .map((variant) => {
-      if (variant.downloaded) {
-        return (
-          `<a href="${variant.downloadUrl}">${variant.payload.resolution.width}x${variant.payload.resolution.height}</a> - ${fileSizeToHumanReadable(variant.size)}` +
-          (best?.downloaded &&
-          variant.path === best.path &&
-          imgVariants.length > 1
-            ? " ← <i>this version</i>"
-            : "")
-        );
-      }
-      return `<a href="${variant.downloadUrl}">?x?</a>`;
-    })
-    .join("\n");
-}
-
-function generateMusicLinksEntry(
-  variant: MusicVariant,
-  best?: MusicVariant,
-): string {
-  if (variant.downloaded) {
-    return (
-      `<a href="${variant.downloadUrl}">${fileSizeToHumanReadable(variant.size)}</a>` +
-      (best?.downloaded && variant.path === best.path
-        ? " ← <i>this version</i>"
-        : "")
-    );
-  }
-
-  return `<a href="${variant.downloadUrl}">? MB</a>`;
-}
 
 function deleteMessageSafe(
   ctx: Filter<Context, "message">,
@@ -155,15 +36,6 @@ function deleteMessageSafe(
 ) {
   if (!message) return;
   ctx.api.deleteMessage(message.chat.id, message.message_id).catch();
-}
-
-function buildSingleMediaLinksMessage(links: string[]): string {
-  return (
-    `selected link:\n${links[0]}` +
-    (links.length > 1
-      ? `\n\nother attempted links:\n${links.slice(1).join("\n")}`
-      : "")
-  );
 }
 
 async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
@@ -300,17 +172,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       }
 
       if (userSettings.verboseOutput) {
-        await sendChunkedLinks(
-          ctx,
-          res.variants.map(
-            (img, i) =>
-              `image ${i + 1}:\n` +
-              generatePhotosLinksEntry(
-                img,
-                img.find((variant) => variant.downloaded),
-              ),
-          ),
-        );
+        await sendChunkedLinks(ctx, buildImageLinksMessages(res.variants));
       }
     } else if (res.contentType === "music") {
       const uploadedFile = res.variants.find(

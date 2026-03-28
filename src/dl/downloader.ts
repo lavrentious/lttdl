@@ -2,6 +2,7 @@ import { randomUUIDv7 } from "bun";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
 import { zipArrays } from "src/utils/array";
+import { mapWithConcurrency, retryAsync } from "src/utils/async";
 import { config } from "src/utils/env-validation";
 import { getImageResolution, recodeImageToJpeg } from "src/utils/image";
 import { logger } from "src/utils/logger";
@@ -13,6 +14,11 @@ import { V3Fetcher } from "./fetcher/v3-fetcher";
 
 const FETCH_INFO_TIMEOUT_MS = 15000;
 const FILE_DOWNLOAD_TIMEOUT_MS = 45000;
+const FETCH_INFO_RETRIES = 1;
+const FILE_DOWNLOAD_RETRIES = 1;
+const RETRY_DELAY_MS = 300;
+const MAX_DOWNLOAD_CONCURRENCY = 3;
+const MAX_IMAGE_ENTRY_CONCURRENCY = 2;
 
 type ContentVariant<T> = {
   downloadUrl: string;
@@ -45,14 +51,23 @@ async function downloadFile(url: string, dir?: string, name?: string) {
   if (!dir) dir = config.get("TEMP_DIR");
   if (!name) name = randomUUIDv7();
   const outputPath = path.join(dir, name);
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(FILE_DOWNLOAD_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to download: ${res.status}`);
-  }
+  const arrayBuffer = await retryAsync(
+    async () => {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(FILE_DOWNLOAD_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to download: ${res.status}`);
+      }
+      return await res.arrayBuffer();
+    },
+    {
+      retries: FILE_DOWNLOAD_RETRIES,
+      delayMs: RETRY_DELAY_MS,
+      shouldRetry: isRetryableNetworkError,
+    },
+  );
 
-  const arrayBuffer = await res.arrayBuffer();
   await Bun.write(outputPath, arrayBuffer, { createPath: true });
   return outputPath;
 }
@@ -122,6 +137,23 @@ type ResolvedDownloadInfo = {
   contentName: string | null;
   urls: string[][];
 };
+
+function isRetryableNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    error.name === "AbortError" ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("network") ||
+    message.includes("fetch") ||
+    message.includes("socket") ||
+    message.includes("connection")
+  );
+}
 
 function cleanupVariant(variant: { cleanup?: () => void }) {
   try {
@@ -294,10 +326,18 @@ async function resolveDownloadInfo(
 
   await Promise.allSettled(
     fetchers.map(async (f) =>
-      await withTimeout(
-        f.fetchInfo(),
-        FETCH_INFO_TIMEOUT_MS,
-        `${f.constructor.name} fetchInfo`,
+      await retryAsync(
+        async () =>
+          await withTimeout(
+            f.fetchInfo(),
+            FETCH_INFO_TIMEOUT_MS,
+            `${f.constructor.name} fetchInfo`,
+          ),
+        {
+          retries: FETCH_INFO_RETRIES,
+          delayMs: RETRY_DELAY_MS,
+          shouldRetry: isRetryableNetworkError,
+        },
       ),
     ),
   );
@@ -342,7 +382,11 @@ export async function downloadTiktok(
 
     if (strategy === "all") {
       variants = sortByResolution(
-        await Promise.all(urls[0]!.map((variantUrl) => downloadVideoVariant(variantUrl, tempDir))),
+        await mapWithConcurrency(
+          urls[0]!,
+          MAX_DOWNLOAD_CONCURRENCY,
+          async (variantUrl) => await downloadVideoVariant(variantUrl, tempDir),
+        ),
       );
     } else {
       for (const variantUrl of urls[0]!) {
@@ -362,11 +406,17 @@ export async function downloadTiktok(
       variants,
     };
   } else if (contentType === "image") {
-    const variants = await Promise.all(
-      urls.map(async (img) => {
+    const variants = await mapWithConcurrency(
+      urls,
+      MAX_IMAGE_ENTRY_CONCURRENCY,
+      async (img) => {
         if (strategy === "all") {
           return sortByResolution(
-            await Promise.all(img.map((imageUrl) => downloadPhotoVariant(imageUrl, tempDir))),
+            await mapWithConcurrency(
+              img,
+              MAX_DOWNLOAD_CONCURRENCY,
+              async (imageUrl) => await downloadPhotoVariant(imageUrl, tempDir),
+            ),
           );
         }
 
@@ -382,7 +432,7 @@ export async function downloadTiktok(
         return attempted.length
           ? attempted
           : [{ downloaded: false, downloadUrl: img[0]! } satisfies PhotoVariant];
-      }),
+      },
     );
     res = {
       contentType: "image",
@@ -393,10 +443,11 @@ export async function downloadTiktok(
 
     if (strategy === "all") {
       variants.push(
-        ...(await Promise.all(
-          urls[0]!.map((variantUrl) =>
-            downloadMusicVariant(variantUrl, tempDir, contentName),
-          ),
+        ...(await mapWithConcurrency(
+          urls[0]!,
+          MAX_DOWNLOAD_CONCURRENCY,
+          async (variantUrl) =>
+            await downloadMusicVariant(variantUrl, tempDir, contentName),
         )),
       );
     } else {
