@@ -9,9 +9,15 @@ import {
   type TiktokProvider,
 } from "src/dl/platforms/tiktok/types";
 import {
+  ALL_YOUTUBE_PRESETS,
+  YOUTUBE_PRESET_LABELS,
+} from "src/dl/platforms/youtube/types";
+import type { YoutubePreset } from "src/dl/types";
+import {
   getUserSettings,
   updateUserTiktokProviders,
   updateUserVerboseOutput,
+  updateUserYoutubePreset,
 } from "src/settings/user-settings";
 
 const SETTINGS_CALLBACK_PREFIX = "settings";
@@ -20,6 +26,11 @@ const TIKTOK_PROVIDER_DESCRIPTIONS: Record<TiktokProvider, string> = {
   v1: "`v1` - TikTok API scraper path from `@tobyg74/tiktok-api-dl`; alternate source.",
   v2: "`v2` - `ssstik.io`; current default in this bot, generally the primary/stablest choice here.",
   v3: "`v3` - `musicaldown.com`; alternate source, not recommended - very laggy",
+};
+
+const YOUTUBE_PRESET_DESCRIPTIONS: Record<YoutubePreset, string> = {
+  best: "`best` - highest quality video with audio, recoded to mp4.",
+  "best-audio": "`best audio` - best audio-only output, converted to mp3.",
 };
 
 function icon(enabled: boolean): string {
@@ -32,10 +43,12 @@ function formatMainSettingsMessage(userId: number): string {
   return (
     `*settings*\n\n` +
     `verbose output controls whether the bot sends link details after successful downloads.\n` +
-    `tiktok providers let you choose which internal extraction paths are used for tiktok downloads.\n\n` +
+    `tiktok providers choose the internal extraction paths for tiktok links.\n` +
+    `youtube preset chooses how youtube links are downloaded with yt-dlp.\n\n` +
     `*current*\n` +
     `verbose: ${settings.verboseOutput ? "on" : "off"}\n` +
-    `tiktok providers: ${settings.platformPreferences.tiktok.providers.join(", ")}`
+    `tiktok providers: ${settings.platformPreferences.tiktok.providers.join(", ")}\n` +
+    `youtube preset: ${YOUTUBE_PRESET_LABELS[settings.platformPreferences.youtube.preset]}`
   );
 }
 
@@ -54,6 +67,18 @@ function formatProvidersMessage(userId: number): string {
   );
 }
 
+function formatYoutubePresetMessage(userId: number): string {
+  const settings = getUserSettings(userId);
+
+  return (
+    `*youtube preset*\n\n` +
+    `this preset controls how youtube links are downloaded with \`yt-dlp\`.\n\n` +
+    `*current*: ${YOUTUBE_PRESET_LABELS[settings.platformPreferences.youtube.preset]}\n\n` +
+    `${YOUTUBE_PRESET_DESCRIPTIONS.best}\n` +
+    `${YOUTUBE_PRESET_DESCRIPTIONS["best-audio"]}`
+  );
+}
+
 function buildMainSettingsKeyboard(userId: number): InlineKeyboard {
   const settings = getUserSettings(userId);
 
@@ -66,6 +91,11 @@ function buildMainSettingsKeyboard(userId: number): InlineKeyboard {
     .text(
       "tiktok providers >>",
       `${SETTINGS_CALLBACK_PREFIX}:providers:${userId}`,
+    )
+    .row()
+    .text(
+      "youtube preset >>",
+      `${SETTINGS_CALLBACK_PREFIX}:youtube_preset:${userId}`,
     );
 }
 
@@ -86,19 +116,40 @@ function buildProvidersKeyboard(userId: number): InlineKeyboard {
   return keyboard.text("back", `${SETTINGS_CALLBACK_PREFIX}:main:${userId}`);
 }
 
+function buildYoutubePresetKeyboard(userId: number): InlineKeyboard {
+  const settings = getUserSettings(userId);
+  const currentPreset = settings.platformPreferences.youtube.preset;
+  const keyboard = new InlineKeyboard();
+
+  for (const preset of ALL_YOUTUBE_PRESETS) {
+    keyboard
+      .text(
+        `${YOUTUBE_PRESET_LABELS[preset]} ${icon(currentPreset === preset)}`,
+        `${SETTINGS_CALLBACK_PREFIX}:set_youtube_preset:${userId}:${preset}`,
+      )
+      .row();
+  }
+
+  return keyboard.text("back", `${SETTINGS_CALLBACK_PREFIX}:main:${userId}`);
+}
+
 async function editSettingsMessage(
   ctx: CallbackQueryContext<Context>,
-  view: "main" | "providers",
+  view: "main" | "providers" | "youtube_preset",
   userId: number,
 ) {
   const text =
     view === "main"
       ? formatMainSettingsMessage(userId)
-      : formatProvidersMessage(userId);
+      : view === "providers"
+        ? formatProvidersMessage(userId)
+        : formatYoutubePresetMessage(userId);
   const replyMarkup =
     view === "main"
       ? buildMainSettingsKeyboard(userId)
-      : buildProvidersKeyboard(userId);
+      : view === "providers"
+        ? buildProvidersKeyboard(userId)
+        : buildYoutubePresetKeyboard(userId);
 
   await ctx.editMessageText(text, {
     parse_mode: "Markdown",
@@ -107,11 +158,19 @@ async function editSettingsMessage(
 }
 
 function parseCallbackData(data: string):
-  | { action: "main" | "providers" | "toggle_verbose"; userId: number }
+  | {
+      action: "main" | "providers" | "youtube_preset" | "toggle_verbose";
+      userId: number;
+    }
   | {
       action: "toggle_provider";
       userId: number;
       provider: TiktokProvider;
+    }
+  | {
+      action: "set_youtube_preset";
+      userId: number;
+      preset: YoutubePreset;
     }
   | null {
   const parts = data.split(":");
@@ -127,6 +186,7 @@ function parseCallbackData(data: string):
   if (
     parts[1] === "main" ||
     parts[1] === "providers" ||
+    parts[1] === "youtube_preset" ||
     parts[1] === "toggle_verbose"
   ) {
     return { action: parts[1], userId };
@@ -141,6 +201,18 @@ function parseCallbackData(data: string):
       action: "toggle_provider",
       userId,
       provider: parts[3] as TiktokProvider,
+    };
+  }
+
+  if (
+    parts[1] === "set_youtube_preset" &&
+    parts[3] &&
+    ALL_YOUTUBE_PRESETS.includes(parts[3] as YoutubePreset)
+  ) {
+    return {
+      action: "set_youtube_preset",
+      userId,
+      preset: parts[3] as YoutubePreset,
     };
   }
 
@@ -178,7 +250,11 @@ export async function settingsCallbackQuery(
     return;
   }
 
-  if (parsed.action === "main" || parsed.action === "providers") {
+  if (
+    parsed.action === "main" ||
+    parsed.action === "providers" ||
+    parsed.action === "youtube_preset"
+  ) {
     await editSettingsMessage(ctx, parsed.action, parsed.userId);
     await ctx.answerCallbackQuery();
     return;
@@ -192,25 +268,32 @@ export async function settingsCallbackQuery(
     return;
   }
 
-  if (parsed.action !== "toggle_provider") {
+  if (parsed.action === "toggle_provider") {
+    const settings = getUserSettings(parsed.userId);
+    const currentProviders = settings.platformPreferences.tiktok.providers;
+    const nextProviders = currentProviders.includes(parsed.provider)
+      ? currentProviders.filter((provider) => provider !== parsed.provider)
+      : [...currentProviders, parsed.provider];
+
+    try {
+      updateUserTiktokProviders(parsed.userId, nextProviders);
+      await editSettingsMessage(ctx, "providers", parsed.userId);
+      await ctx.answerCallbackQuery();
+    } catch {
+      await ctx.answerCallbackQuery({
+        text: "at least one provider must stay enabled",
+        show_alert: true,
+      });
+    }
+    return;
+  }
+
+  if (parsed.action === "set_youtube_preset") {
+    updateUserYoutubePreset(parsed.userId, parsed.preset);
+    await editSettingsMessage(ctx, "youtube_preset", parsed.userId);
     await ctx.answerCallbackQuery();
     return;
   }
 
-  const settings = getUserSettings(parsed.userId);
-  const currentProviders = settings.platformPreferences.tiktok.providers;
-  const nextProviders = currentProviders.includes(parsed.provider)
-    ? currentProviders.filter((provider) => provider !== parsed.provider)
-    : [...currentProviders, parsed.provider];
-
-  try {
-    updateUserTiktokProviders(parsed.userId, nextProviders);
-    await editSettingsMessage(ctx, "providers", parsed.userId);
-    await ctx.answerCallbackQuery();
-  } catch {
-    await ctx.answerCallbackQuery({
-      text: "at least one provider must stay enabled",
-      show_alert: true,
-    });
-  }
+  await ctx.answerCallbackQuery();
 }

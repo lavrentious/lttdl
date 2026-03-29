@@ -1,4 +1,5 @@
 export type Platform = "tiktok" | "youtube" | "pinterest";
+export type YoutubePreset = "best" | "best-audio";
 
 export type ContentKind = "video" | "image" | "audio";
 
@@ -72,4 +73,9 @@ export type DownloadOptions = {
   tempDir?: string;
   strategy?: DownloadStrategy;
   maxFileSize?: number;
+};
+
+export type DownloadExecutionResult = {
+  res: DownloadResult;
+  cleanup: () => void;
 };

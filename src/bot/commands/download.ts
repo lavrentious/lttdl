@@ -122,6 +122,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       query,
       {
         tiktokProviders: userSettings.platformPreferences.tiktok.providers,
+        youtubePreset: userSettings.platformPreferences.youtube.preset,
       },
       {
         strategy: downloadStrategy,

@@ -3,7 +3,10 @@ import { DownloadError } from "src/errors/download-error";
 import type { PlatformHandler } from "./platform-handler";
 import { DownloadRouter } from "./downloader";
 
-function createHandler(platform: PlatformHandler["platform"], pattern: string): PlatformHandler {
+function createHandler(
+  platform: PlatformHandler["platform"],
+  pattern: string,
+): PlatformHandler {
   return {
     platform,
     canHandle(url: string) {

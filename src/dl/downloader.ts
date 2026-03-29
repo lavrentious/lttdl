@@ -8,6 +8,7 @@ import { PinterestPlatformHandler } from "./platforms/pinterest/pinterest-platfo
 import { TiktokPlatformHandler } from "./platforms/tiktok/tiktok-platform-handler";
 import { YoutubePlatformHandler } from "./platforms/youtube/youtube-platform-handler";
 import type {
+  DownloadExecutionResult,
   DownloadOptions,
   DownloadResult,
   MusicVariant,
@@ -204,8 +205,16 @@ export async function downloadContent(
   context: ResolveContext = {},
   options: DownloadOptions = {},
   router: DownloadRouter = defaultRouter,
-): Promise<{ res: DownloadResult; cleanup: () => void }> {
+): Promise<DownloadExecutionResult> {
   const handler = router.resolveHandler(url);
+  if (handler.download) {
+    return await handler.download(url, context, options);
+  }
+
+  if (!handler.resolve) {
+    throw new DownloadError(`platform ${handler.platform} is not implemented`);
+  }
+
   const resolved = await handler.resolve(url, context);
   const tempDir = options.tempDir || config.get("TEMP_DIR");
   const strategy = options.strategy || "all";

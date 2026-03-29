@@ -1,7 +1,14 @@
-import type { Platform, ResolvedContent } from "./types";
+import type {
+  DownloadExecutionResult,
+  DownloadOptions,
+  Platform,
+  ResolvedContent,
+  YoutubePreset,
+} from "./types";
 
 export type ResolveContext = {
   tiktokProviders?: string[];
+  youtubePreset?: YoutubePreset;
 };
 
 export interface PlatformHandler {
@@ -9,5 +16,11 @@ export interface PlatformHandler {
 
   canHandle(url: string): boolean;
 
-  resolve(url: string, context?: ResolveContext): Promise<ResolvedContent>;
+  resolve?(url: string, context?: ResolveContext): Promise<ResolvedContent>;
+
+  download?(
+    url: string,
+    context?: ResolveContext,
+    options?: DownloadOptions,
+  ): Promise<DownloadExecutionResult>;
 }

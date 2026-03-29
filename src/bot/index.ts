@@ -7,12 +7,19 @@ import { downloadCommand } from "./commands/download";
 
 function startupCheck() {
   const ffprobePath = Bun.which("ffprobe");
+  const ytDlpPath = Bun.which("yt-dlp");
 
   if (!ffprobePath) {
     logger.crit(
       "ffprobe is not installed in the system, but is required. install it with `apt install ffmpeg`, then we'll talk...",
     );
     process.exit(1);
+  }
+
+  if (!ytDlpPath) {
+    logger.warn(
+      "yt-dlp is not installed; youtube downloads will fail until it is available in PATH.",
+    );
   }
 }
 
@@ -25,9 +32,9 @@ export function initBot() {
   bot.command("start", (ctx) =>
     ctx.reply(
       "hi.\n" +
-        "this is a bot for downloading tiktoks without watermarks. no ads, no spam, no sponsors.\n" +
-        "send a tiktok link and get the video/photos/music.\n" +
-        "use /settings to configure verbose output and download sources.",
+        "this is a bot for downloading tiktoks without watermarks and youtube media. no ads, no spam, no sponsors.\n" +
+        "send a tiktok or youtube link and get the media.\n" +
+        "use /settings to configure verbose output, tiktok providers, and youtube preset.",
     ),
   );
   bot.command("settings", settingsCommand);
