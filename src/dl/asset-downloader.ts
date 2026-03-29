@@ -81,11 +81,33 @@ export class AssetDownloader {
     mkdirSync(resolvedDir, { recursive: true });
     await retryAsync(
       async () => {
-        const res = await fetchWithTimeout(url, FILE_DOWNLOAD_TIMEOUT_MS);
+        const controller = new AbortController();
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        const resetTimeout = (phase: string) => {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          timeoutId = setTimeout(() => {
+            controller.abort(
+              new Error(`download timed out during ${phase} after ${FILE_DOWNLOAD_TIMEOUT_MS}ms`),
+            );
+          }, FILE_DOWNLOAD_TIMEOUT_MS);
+        };
+
+        resetTimeout("request");
+        const res = await fetch(url, {
+          signal: controller.signal,
+        });
         if (!res.ok) {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
           throw new Error(`Failed to download: ${res.status}`);
         }
         if (!res.body) {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
           throw new Error("download response has no body");
         }
 
@@ -103,6 +125,7 @@ export class AssetDownloader {
 
         try {
           while (true) {
+            resetTimeout("response stream");
             const { done, value } = await reader.read();
             if (done) {
               break;
@@ -114,6 +137,7 @@ export class AssetDownloader {
 
             downloadedBytes += value.byteLength;
             if (!output.write(Buffer.from(value))) {
+              resetTimeout("file write");
               await new Promise<void>((resolve) =>
                 output.once("drain", resolve),
               );
@@ -132,6 +156,9 @@ export class AssetDownloader {
             }
           }
         } finally {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
           output.end();
           await new Promise<void>((resolve, reject) => {
             output.once("close", resolve);
