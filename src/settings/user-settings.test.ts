@@ -35,31 +35,31 @@ describe("user settings", () => {
 
   test("preserves youtube preset when toggling verbose output", () => {
     const userId = 101;
-    updateUserYoutubePreset(userId, "best-audio");
+    updateUserYoutubePreset(userId, "mid-audio");
 
     const updated = updateUserVerboseOutput(userId, true);
 
     expect(updated.verboseOutput).toBe(true);
-    expect(updated.platformPreferences.youtube.preset).toBe("best-audio");
+    expect(updated.platformPreferences.youtube.preset).toBe("mid-audio");
   });
 
   test("preserves youtube preset when updating tiktok providers", () => {
     const userId = 102;
-    updateUserYoutubePreset(userId, "best-audio");
+    updateUserYoutubePreset(userId, "fast-720");
 
     const updated = updateUserTiktokProviders(userId, ["v1", "v2"]);
 
     expect(updated.platformPreferences.tiktok.providers).toEqual(["v1", "v2"]);
-    expect(updated.platformPreferences.youtube.preset).toBe("best-audio");
+    expect(updated.platformPreferences.youtube.preset).toBe("fast-720");
   });
 
   test("persists youtube preset updates", () => {
     const userId = 103;
-    updateUserYoutubePreset(userId, "best-audio");
+    updateUserYoutubePreset(userId, "fast-1080");
 
     const settings = getUserSettings(userId);
 
-    expect(settings.platformPreferences.youtube.preset).toBe("best-audio");
+    expect(settings.platformPreferences.youtube.preset).toBe("fast-1080");
   });
 });
 

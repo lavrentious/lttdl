@@ -12,11 +12,121 @@ function createTempDir(): string {
 }
 
 describe("YoutubePlatformHandler", () => {
+  test("downloads fast-1080 preset as video", async () => {
+    const tempDir = createTempDir();
+    const handler = new YoutubePlatformHandler({
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Video title",
+              width: 1920,
+              height: 1080,
+              webpage_url: "https://youtu.be/example-fast-1080",
+            }),
+            stderr: "",
+          };
+        }
+        expect(cmd).toContain(
+          "b[ext=mp4][height<=1080]/bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[height<=1080]/bv*[height<=1080]+ba/b",
+        );
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        const finalPath = outputTemplate.replace("%(ext)s", "mp4");
+        await Bun.write(finalPath, "video");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            title: "Video title",
+            width: 1920,
+            height: 1080,
+            webpage_url: "https://youtu.be/example-fast-1080",
+          }),
+          stderr: "",
+        };
+      },
+      getVideoResolution: async () => ({ width: 1, height: 1 }),
+    });
+
+    const result = await handler.download!(
+      "https://youtu.be/example-fast-1080",
+      { youtubePreset: "fast-1080" },
+      { tempDir },
+    );
+
+    expect(result.res.contentType).toBe("video");
+    result.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("downloads fast-720 preset as video", async () => {
+    const tempDir = createTempDir();
+    const handler = new YoutubePlatformHandler({
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Video title",
+              width: 1280,
+              height: 720,
+              webpage_url: "https://youtu.be/example-fast-720",
+            }),
+            stderr: "",
+          };
+        }
+        expect(cmd).toContain(
+          "b[ext=mp4][height<=720]/bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[height<=720]/bv*[height<=720]+ba/b",
+        );
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        const finalPath = outputTemplate.replace("%(ext)s", "mp4");
+        await Bun.write(finalPath, "video");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            title: "Video title",
+            width: 1280,
+            height: 720,
+            webpage_url: "https://youtu.be/example-fast-720",
+          }),
+          stderr: "",
+        };
+      },
+      getVideoResolution: async () => ({ width: 1, height: 1 }),
+    });
+
+    const result = await handler.download!(
+      "https://youtu.be/example-fast-720",
+      { youtubePreset: "fast-720" },
+      { tempDir },
+    );
+
+    expect(result.res.contentType).toBe("video");
+    result.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
   test("downloads best preset as video", async () => {
     const tempDir = createTempDir();
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Video title",
+              width: 1920,
+              height: 1080,
+              webpage_url: "https://youtu.be/example",
+            }),
+            stderr: "",
+          };
+        }
         expect(cmd).toContain("bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b");
         expect(cmd).toContain("--merge-output-format");
         expect(cmd).toContain("--progress");
@@ -65,6 +175,16 @@ describe("YoutubePlatformHandler", () => {
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Fallback container video",
+              webpage_url: "https://youtu.be/fallback",
+            }),
+            stderr: "",
+          };
+        }
         expect(cmd).toContain("--progress");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
@@ -109,6 +229,16 @@ describe("YoutubePlatformHandler", () => {
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Audio title",
+              webpage_url: "https://youtube.com/watch?v=example",
+            }),
+            stderr: "",
+          };
+        }
         expect(cmd).toContain("--audio-format");
         expect(cmd).toContain("mp3");
         expect(cmd).toContain("--progress");
@@ -152,6 +282,51 @@ describe("YoutubePlatformHandler", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  test("downloads mid-audio preset as music", async () => {
+    const tempDir = createTempDir();
+    const handler = new YoutubePlatformHandler({
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Mid audio title",
+              webpage_url: "https://youtube.com/watch?v=mid-audio",
+            }),
+            stderr: "",
+          };
+        }
+        expect(cmd).toContain("ba[abr<=128]/ba");
+        expect(cmd).toContain("--audio-quality");
+        expect(cmd).toContain("7");
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+        await Bun.write(finalPath, "audio");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            title: "Mid audio title",
+            webpage_url: "https://youtube.com/watch?v=mid-audio",
+          }),
+          stderr: "",
+        };
+      },
+      getVideoResolution: async () => ({ width: 1, height: 1 }),
+    });
+
+    const result = await handler.download!(
+      "https://youtube.com/watch?v=mid-audio",
+      { youtubePreset: "mid-audio" },
+      { tempDir },
+    );
+
+    expect(result.res.contentType).toBe("music");
+    result.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
   test("fails clearly when yt-dlp is missing", async () => {
     const handler = new YoutubePlatformHandler({
       which: () => null,
@@ -170,6 +345,18 @@ describe("YoutubePlatformHandler", () => {
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd, hooks) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Progress video",
+              width: 1280,
+              height: 720,
+              webpage_url: "https://youtu.be/progress",
+            }),
+            stderr: "",
+          };
+        }
         await hooks?.onStdoutLine?.("[download]  25.0% of 100.00MiB at 5.00MiB/s ETA 00:15");
         await hooks?.onStdoutLine?.("[VideoRemuxer] Remuxing video from webm to mp4");
         const outputArgIndex = cmd.indexOf("--output");
@@ -211,6 +398,18 @@ describe("YoutubePlatformHandler", () => {
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd, hooks) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Progress video stderr",
+              width: 1280,
+              height: 720,
+              webpage_url: "https://youtu.be/progress-stderr",
+            }),
+            stderr: "",
+          };
+        }
         await hooks?.onStderrLine?.("[download]  75.0% of 100.00MiB at 5.00MiB/s ETA 00:05");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;

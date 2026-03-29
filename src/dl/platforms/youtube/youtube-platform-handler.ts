@@ -150,8 +150,32 @@ function getPresetArgs(preset: YoutubePreset): string[] {
         "--merge-output-format",
         "mp4",
       ];
+    case "fast-1080":
+      return [
+        "-f",
+        "b[ext=mp4][height<=1080]/bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[height<=1080]/bv*[height<=1080]+ba/b",
+        "--merge-output-format",
+        "mp4",
+      ];
+    case "fast-720":
+      return [
+        "-f",
+        "b[ext=mp4][height<=720]/bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[height<=720]/bv*[height<=720]+ba/b",
+        "--merge-output-format",
+        "mp4",
+      ];
     case "best-audio":
       return ["-f", "ba", "-x", "--audio-format", "mp3"];
+    case "mid-audio":
+      return [
+        "-f",
+        "ba[abr<=128]/ba",
+        "-x",
+        "--audio-format",
+        "mp3",
+        "--audio-quality",
+        "7",
+      ];
   }
 }
 
@@ -242,7 +266,7 @@ function resolveFinalPath(
   basename: string,
   preset: YoutubePreset,
 ): string {
-  if (preset === "best-audio") {
+  if (preset === "best-audio" || preset === "mid-audio") {
     const expectedPath = path.join(tempDir, `${basename}.mp3`);
     if (existsSync(expectedPath)) {
       logger.debug(`resolved yt-dlp audio output path: ${expectedPath}`);
@@ -315,7 +339,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
       options?.maxFileSize !== undefined &&
       ((estimatedSize !== undefined && estimatedSize > options.maxFileSize) ||
         (estimatedSize === undefined &&
-          preset === "best" &&
+          (preset === "best" || preset === "fast-1080" || preset === "fast-720") &&
           isLikelyOversizeVideo(metadata.duration, options.maxFileSize)))
     ) {
       throw new DownloadError(
@@ -333,7 +357,13 @@ export class YoutubePlatformHandler implements PlatformHandler {
     logger.debug(
       preset === "best"
         ? "youtube best preset using mp4-first fast path with merge/remux only"
-        : "youtube best-audio preset using audio extraction to mp3",
+        : preset === "fast-1080"
+          ? "youtube fast-1080 preset using capped 1080p mp4-first selection"
+          : preset === "fast-720"
+            ? "youtube fast-720 preset using capped 720p mp4-first selection"
+            : preset === "best-audio"
+              ? "youtube best-audio preset using audio extraction to mp3"
+              : "youtube mid-audio preset using reduced bitrate mp3 extraction",
     );
     logger.debug(
       `youtube preset=${preset}, tempDir=${tempDir}, outputTemplate=${outputTemplate}`,
@@ -383,7 +413,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
       }
     };
 
-    if (preset === "best-audio") {
+    if (preset === "best-audio" || preset === "mid-audio") {
       logger.debug(`youtube audio ready at ${finalPath}`);
       return {
         res: {

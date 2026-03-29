@@ -10,6 +10,7 @@ import {
 } from "src/dl/platforms/tiktok/types";
 import {
   ALL_YOUTUBE_PRESETS,
+  YOUTUBE_PRESET_DESCRIPTIONS,
   YOUTUBE_PRESET_LABELS,
 } from "src/dl/platforms/youtube/types";
 import type { YoutubePreset } from "src/dl/types";
@@ -26,11 +27,6 @@ const TIKTOK_PROVIDER_DESCRIPTIONS: Record<TiktokProvider, string> = {
   v1: "`v1` - TikTok API scraper path from `@tobyg74/tiktok-api-dl`; alternate source.",
   v2: "`v2` - `ssstik.io`; current default in this bot, generally the primary/stablest choice here.",
   v3: "`v3` - `musicaldown.com`; alternate source, not recommended - very laggy",
-};
-
-const YOUTUBE_PRESET_DESCRIPTIONS: Record<YoutubePreset, string> = {
-  best: "`best` - highest quality video with audio, prefers mp4-compatible downloads and avoids slow recoding when possible.",
-  "best-audio": "`best audio` - best audio-only output, converted to mp3.",
 };
 
 function icon(enabled: boolean): string {
@@ -74,8 +70,7 @@ function formatYoutubePresetMessage(userId: number): string {
     `*youtube preset*\n\n` +
     `this preset controls how youtube links are downloaded with \`yt-dlp\`.\n\n` +
     `*current*: ${YOUTUBE_PRESET_LABELS[settings.platformPreferences.youtube.preset]}\n\n` +
-    `${YOUTUBE_PRESET_DESCRIPTIONS.best}\n` +
-    `${YOUTUBE_PRESET_DESCRIPTIONS["best-audio"]}`
+    ALL_YOUTUBE_PRESETS.map((preset) => YOUTUBE_PRESET_DESCRIPTIONS[preset]).join("\n")
   );
 }
 

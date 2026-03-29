@@ -1,5 +1,10 @@
 export type Platform = "tiktok" | "youtube" | "pinterest";
-export type YoutubePreset = "best" | "best-audio";
+export type YoutubePreset =
+  | "best"
+  | "fast-1080"
+  | "fast-720"
+  | "best-audio"
+  | "mid-audio";
 
 export type ContentKind = "video" | "image" | "audio";
 
