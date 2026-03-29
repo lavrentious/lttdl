@@ -29,7 +29,7 @@ const TIKTOK_PROVIDER_DESCRIPTIONS: Record<TiktokProvider, string> = {
 };
 
 const YOUTUBE_PRESET_DESCRIPTIONS: Record<YoutubePreset, string> = {
-  best: "`best` - highest quality video with audio, recoded to mp4.",
+  best: "`best` - highest quality video with audio, prefers mp4-compatible downloads and avoids slow recoding when possible.",
   "best-audio": "`best audio` - best audio-only output, converted to mp3.",
 };
 

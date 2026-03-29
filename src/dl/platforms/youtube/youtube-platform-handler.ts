@@ -1,5 +1,5 @@
 import { randomUUIDv7 } from "bun";
-import { existsSync, rmSync } from "fs";
+import { existsSync, readdirSync, rmSync } from "fs";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
 import { config } from "src/utils/env-validation";
@@ -57,14 +57,15 @@ async function runCommand(cmd: string[]): Promise<CommandResult> {
 function getPresetArgs(preset: YoutubePreset): string[] {
   switch (preset) {
     case "best":
-      return ["-f", "bv*+ba", "--recode-video", "mp4"];
+      return [
+        "-f",
+        "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+        "--merge-output-format",
+        "mp4",
+      ];
     case "best-audio":
       return ["-f", "ba", "-x", "--audio-format", "mp3"];
   }
-}
-
-function getExpectedExtension(preset: YoutubePreset): "mp4" | "mp3" {
-  return preset === "best" ? "mp4" : "mp3";
 }
 
 function parseMetadata(stdout: string): YoutubeMetadata {
@@ -90,10 +91,28 @@ function resolveFinalPath(
   basename: string,
   preset: YoutubePreset,
 ): string {
-  const expectedPath = path.join(tempDir, `${basename}.${getExpectedExtension(preset)}`);
-  if (existsSync(expectedPath)) {
-    logger.debug(`resolved yt-dlp output path: ${expectedPath}`);
-    return expectedPath;
+  if (preset === "best-audio") {
+    const expectedPath = path.join(tempDir, `${basename}.mp3`);
+    if (existsSync(expectedPath)) {
+      logger.debug(`resolved yt-dlp audio output path: ${expectedPath}`);
+      return expectedPath;
+    }
+  } else {
+    const preferredPath = path.join(tempDir, `${basename}.mp4`);
+    if (existsSync(preferredPath)) {
+      logger.debug(`resolved yt-dlp video output path as mp4: ${preferredPath}`);
+      return preferredPath;
+    }
+  }
+
+  const matchedPath = readdirSync(tempDir)
+    .filter((entry) => entry.startsWith(`${basename}.`))
+    .filter((entry) => !entry.endsWith(".part"))
+    .map((entry) => path.join(tempDir, entry))
+    .find((entryPath) => existsSync(entryPath));
+  if (matchedPath) {
+    logger.debug(`resolved yt-dlp fallback output path: ${matchedPath}`);
+    return matchedPath;
   }
 
   throw new DownloadError("yt-dlp completed but produced no output file");
@@ -135,6 +154,11 @@ export class YoutubePlatformHandler implements PlatformHandler {
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
     logger.debug(
+      preset === "best"
+        ? "youtube best preset using mp4-first fast path with merge/remux only"
+        : "youtube best-audio preset using audio extraction to mp3",
+    );
+    logger.debug(
       `youtube preset=${preset}, tempDir=${tempDir}, outputTemplate=${outputTemplate}`,
     );
     const { exitCode, stdout, stderr } = await this.deps.runCommand([
@@ -157,6 +181,9 @@ export class YoutubePlatformHandler implements PlatformHandler {
     const metadata = parseMetadata(stdout);
     logger.debug(`yt-dlp metadata: ${JSON.stringify(metadata)}`);
     const finalPath = resolveFinalPath(tempDir, basename, preset);
+    logger.debug(
+      `youtube final container: ${path.extname(finalPath).replace(/^\./, "") || "unknown"}`,
+    );
     const cleanup = () => {
       if (existsSync(finalPath)) {
         logger.debug(`cleaning up youtube download at ${finalPath}`);

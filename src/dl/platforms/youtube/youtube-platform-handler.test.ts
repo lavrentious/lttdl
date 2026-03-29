@@ -17,8 +17,9 @@ describe("YoutubePlatformHandler", () => {
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
-        expect(cmd).toContain("bv*+ba");
-        expect(cmd).toContain("mp4");
+        expect(cmd).toContain("bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b");
+        expect(cmd).toContain("--merge-output-format");
+        expect(cmd).not.toContain("--recode-video");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
         const finalPath = outputTemplate.replace("%(ext)s", "mp4");
@@ -52,6 +53,48 @@ describe("YoutubePlatformHandler", () => {
     if (variant?.downloaded) {
       expect(variant.payload.resolution).toEqual({ width: 1920, height: 1080 });
       expect(variant.downloadUrl).toBe("https://youtu.be/example");
+    }
+
+    result.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("downloads best preset when yt-dlp falls back to a non-mp4 container", async () => {
+    const tempDir = createTempDir();
+    const handler = new YoutubePlatformHandler({
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd) => {
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        const finalPath = outputTemplate.replace("%(ext)s", "webm");
+        await Bun.write(finalPath, "video");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            title: "Fallback container video",
+            webpage_url: "https://youtu.be/fallback",
+          }),
+          stderr: "",
+        };
+      },
+      getVideoResolution: async () => ({ width: 640, height: 360 }),
+    });
+
+    const result = await handler.download!(
+      "https://youtu.be/fallback",
+      { youtubePreset: "best" },
+      { tempDir },
+    );
+
+    expect(result.res.contentType).toBe("video");
+    if (result.res.contentType !== "video") {
+      throw new Error("expected a video result");
+    }
+    const variant = result.res.variants[0];
+    expect(variant?.downloaded).toBe(true);
+    if (variant?.downloaded) {
+      expect(variant.path.endsWith(".webm")).toBe(true);
+      expect(variant.payload.resolution).toEqual({ width: 640, height: 360 });
     }
 
     result.cleanup();
