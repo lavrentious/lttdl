@@ -32,6 +32,9 @@ const TIKTOK_PROVIDER_DESCRIPTIONS: Record<TiktokProvider, string> = {
 function icon(enabled: boolean): string {
   return enabled ? "✅" : "❌";
 }
+function selectIcon(enabled: boolean): string {
+  return enabled ? "✅" : "";
+}
 
 function formatMainSettingsMessage(userId: number): string {
   const settings = getUserSettings(userId);
@@ -119,7 +122,7 @@ function buildYoutubePresetKeyboard(userId: number): InlineKeyboard {
   for (const preset of ALL_YOUTUBE_PRESETS) {
     keyboard
       .text(
-        `${YOUTUBE_PRESET_LABELS[preset]} ${icon(currentPreset === preset)}`,
+        `${selectIcon(currentPreset === preset)} ${YOUTUBE_PRESET_LABELS[preset]}`,
         `${SETTINGS_CALLBACK_PREFIX}:set_youtube_preset:${userId}:${preset}`,
       )
       .row();
