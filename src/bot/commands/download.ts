@@ -6,7 +6,7 @@ import {
   type MiddlewareFn,
 } from "grammy";
 import {
-  downloadTiktok,
+  downloadContent,
   type MusicVariant,
   type VideoVariant,
 } from "src/dl/downloader";
@@ -118,20 +118,16 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
   const downloadStrategy = userSettings.verboseOutput ? "all" : "single";
 
   try {
-    const { res, cleanup } = await downloadTiktok(
+    const { res, cleanup } = await downloadContent(
       query,
-      userSettings.downloadSources,
+      {
+        tiktokProviders: userSettings.platformPreferences.tiktok.providers,
+      },
       {
         strategy: downloadStrategy,
         maxFileSize: MAX_FILE_SIZE,
       },
     );
-    if (!res) {
-      logger.error(`failed to download tiktok from ${query} (no result)`);
-      await ctx.reply("failed to download");
-      await next();
-      return;
-    }
 
     if (res.contentType === "video") {
       const uploadedFile = res.variants.find(
@@ -166,12 +162,12 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       const imageLinks = buildImageLinksMessages(res.variants);
 
       const media = res.variants
-        .filter((v) => v.length)
-        .map((v) => {
-          const downloaded = v.filter((vv) => vv.downloaded);
+        .filter((variants) => variants.length)
+        .map((variants) => {
+          const downloaded = variants.filter((variant) => variant.downloaded);
           return InputMediaBuilder.photo(
             new InputFile(
-              downloaded.length ? downloaded[0]!.path : v[0]!.downloadUrl,
+              downloaded.length ? downloaded[0]!.path : variants[0]!.downloadUrl,
             ),
           );
         });

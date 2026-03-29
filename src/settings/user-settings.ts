@@ -1,49 +1,62 @@
 import { mkdirSync } from "fs";
 import path from "path";
 import { Database } from "bun:sqlite";
-import { ALL_DOWNLOAD_SOURCES, DownloadSource } from "src/dl/downloader";
+import {
+  ALL_TIKTOK_PROVIDERS,
+  type TiktokProvider,
+} from "src/dl/platforms/tiktok/types";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
 
 export type UserSettings = {
   verboseOutput: boolean;
-  downloadSources: DownloadSource[];
+  platformPreferences: {
+    tiktok: {
+      providers: TiktokProvider[];
+    };
+  };
 };
 
 type UserSettingsRow = {
   verbose_output: number;
-  download_sources: string;
+  tiktok_providers: string;
 };
+
+const DEFAULT_TIKTOK_PROVIDERS: TiktokProvider[] = ["v2"];
 
 const DEFAULT_USER_SETTINGS: UserSettings = {
   verboseOutput: false,
-  downloadSources: [DownloadSource.V2],
+  platformPreferences: {
+    tiktok: {
+      providers: DEFAULT_TIKTOK_PROVIDERS,
+    },
+  },
 };
 
 let db: Database | null = null;
 
-function sortDownloadSources(sources: DownloadSource[]): DownloadSource[] {
-  return [...sources].sort(
-    (a, b) => ALL_DOWNLOAD_SOURCES.indexOf(a) - ALL_DOWNLOAD_SOURCES.indexOf(b),
+function sortTiktokProviders(providers: TiktokProvider[]): TiktokProvider[] {
+  return [...providers].sort(
+    (a, b) => ALL_TIKTOK_PROVIDERS.indexOf(a) - ALL_TIKTOK_PROVIDERS.indexOf(b),
   );
 }
 
-function normalizeDownloadSources(
-  sources: readonly (string | DownloadSource)[],
-): DownloadSource[] {
-  const uniqueSources = Array.from(
+function normalizeTiktokProviders(
+  providers: readonly (string | TiktokProvider)[],
+): TiktokProvider[] {
+  const uniqueProviders = Array.from(
     new Set(
-      sources.filter((source): source is DownloadSource =>
-        ALL_DOWNLOAD_SOURCES.includes(source as DownloadSource),
+      providers.filter((provider): provider is TiktokProvider =>
+        ALL_TIKTOK_PROVIDERS.includes(provider as TiktokProvider),
       ),
     ),
   );
 
-  if (!uniqueSources.length) {
-    throw new Error("at least one download source must be enabled");
+  if (!uniqueProviders.length) {
+    throw new Error("at least one tiktok provider must be enabled");
   }
 
-  return sortDownloadSources(uniqueSources);
+  return sortTiktokProviders(uniqueProviders);
 }
 
 function getDbOrThrow(): Database {
@@ -53,24 +66,36 @@ function getDbOrThrow(): Database {
   return db;
 }
 
-function parseDownloadSources(value: string): DownloadSource[] {
+function parseTiktokProviders(value: string): TiktokProvider[] {
   try {
     const parsed = JSON.parse(value);
     if (!Array.isArray(parsed)) {
-      throw new Error("download_sources must be an array");
+      throw new Error("tiktok_providers must be an array");
     }
-    return normalizeDownloadSources(parsed);
+    return normalizeTiktokProviders(parsed);
   } catch (err) {
-    logger.warn(`failed to parse user settings download sources: ${String(err)}`);
-    return DEFAULT_USER_SETTINGS.downloadSources;
+    logger.warn(`failed to parse user settings tiktok providers: ${String(err)}`);
+    return [...DEFAULT_TIKTOK_PROVIDERS];
   }
 }
 
 function rowToUserSettings(row: UserSettingsRow): UserSettings {
   return {
     verboseOutput: Boolean(row.verbose_output),
-    downloadSources: parseDownloadSources(row.download_sources),
+    platformPreferences: {
+      tiktok: {
+        providers: parseTiktokProviders(row.tiktok_providers),
+      },
+    },
   };
+}
+
+function ensureTiktokProvidersColumn(database: Database) {
+  try {
+    database.exec(`
+      ALTER TABLE user_settings RENAME COLUMN download_sources TO tiktok_providers;
+    `);
+  } catch {}
 }
 
 export function initUserSettingsDb() {
@@ -83,23 +108,28 @@ export function initUserSettingsDb() {
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id INTEGER PRIMARY KEY,
       verbose_output INTEGER NOT NULL DEFAULT 0,
-      download_sources TEXT NOT NULL DEFAULT '["v2"]',
+      tiktok_providers TEXT NOT NULL DEFAULT '["v2"]',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  ensureTiktokProvidersColumn(db);
 }
 
 export function getDefaultUserSettings(): UserSettings {
   return {
     verboseOutput: DEFAULT_USER_SETTINGS.verboseOutput,
-    downloadSources: [...DEFAULT_USER_SETTINGS.downloadSources],
+    platformPreferences: {
+      tiktok: {
+        providers: [...DEFAULT_USER_SETTINGS.platformPreferences.tiktok.providers],
+      },
+    },
   };
 }
 
 export function getUserSettings(userId: number): UserSettings {
   const row = getDbOrThrow()
-    .query("SELECT verbose_output, download_sources FROM user_settings WHERE user_id = ?")
+    .query("SELECT verbose_output, tiktok_providers FROM user_settings WHERE user_id = ?")
     .get(userId) as UserSettingsRow | null;
 
   if (!row) {
@@ -116,52 +146,48 @@ export function updateUserVerboseOutput(
   getDbOrThrow()
     .query(
       `
-        INSERT INTO user_settings (user_id, verbose_output, download_sources, updated_at)
+        INSERT INTO user_settings (user_id, verbose_output, tiktok_providers, updated_at)
         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(user_id) DO UPDATE SET
           verbose_output = excluded.verbose_output,
           updated_at = CURRENT_TIMESTAMP
       `,
     )
-    .run(
-      userId,
-      Number(verboseOutput),
-      JSON.stringify(DEFAULT_USER_SETTINGS.downloadSources),
-    );
+    .run(userId, Number(verboseOutput), JSON.stringify(DEFAULT_TIKTOK_PROVIDERS));
 
   return getUserSettings(userId);
 }
 
-export function updateUserDownloadSources(
+export function updateUserTiktokProviders(
   userId: number,
-  downloadSources: DownloadSource[],
+  providers: TiktokProvider[],
 ): UserSettings {
-  const normalizedSources = normalizeDownloadSources(downloadSources);
+  const normalizedProviders = normalizeTiktokProviders(providers);
 
   getDbOrThrow()
     .query(
       `
-        INSERT INTO user_settings (user_id, verbose_output, download_sources, updated_at)
+        INSERT INTO user_settings (user_id, verbose_output, tiktok_providers, updated_at)
         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(user_id) DO UPDATE SET
-          download_sources = excluded.download_sources,
+          tiktok_providers = excluded.tiktok_providers,
           updated_at = CURRENT_TIMESTAMP
       `,
     )
     .run(
       userId,
       Number(DEFAULT_USER_SETTINGS.verboseOutput),
-      JSON.stringify(normalizedSources),
+      JSON.stringify(normalizedProviders),
     );
 
   return getUserSettings(userId);
 }
 
-export function parseDownloadSourcesInput(input: string): DownloadSource[] {
-  const sources = input
+export function parseTiktokProvidersInput(input: string): TiktokProvider[] {
+  const providers = input
     .split(",")
-    .map((source) => source.trim().toLowerCase())
+    .map((provider) => provider.trim().toLowerCase())
     .filter(Boolean);
 
-  return normalizeDownloadSources(sources);
+  return normalizeTiktokProviders(providers);
 }
