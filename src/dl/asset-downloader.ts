@@ -11,6 +11,45 @@ const FETCH_INFO_RETRIES = 1;
 const FILE_DOWNLOAD_RETRIES = 1;
 const RETRY_DELAY_MS = 300;
 
+function formatBytesPerSecond(bytesPerSecond: number): string | undefined {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+    return undefined;
+  }
+
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  let value = bytesPerSecond;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function formatEta(totalSeconds: number): string | undefined {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+    return undefined;
+  }
+
+  const seconds = Math.ceil(totalSeconds);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${secs}s`;
+  }
+
+  return `${secs}s`;
+}
+
 async function fetchWithTimeout(
   url: string,
   timeoutMs: number,
@@ -122,6 +161,7 @@ export class AssetDownloader {
         const output = createWriteStream(outputPath, { flags: "w" });
         let downloadedBytes = 0;
         let lastProgressAt = 0;
+        const startedAt = Date.now();
 
         try {
           while (true) {
@@ -146,12 +186,19 @@ export class AssetDownloader {
             const now = Date.now();
             if (now - lastProgressAt >= 500) {
               lastProgressAt = now;
+              const elapsedSeconds = Math.max((now - startedAt) / 1000, 0.001);
+              const bytesPerSecond = downloadedBytes / elapsedSeconds;
               await onProgress?.({
                 stage: "download",
                 percent:
                   totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : undefined,
                 bytesDownloaded: downloadedBytes,
                 totalBytes: totalBytes > 0 ? totalBytes : undefined,
+                speed: formatBytesPerSecond(bytesPerSecond),
+                eta:
+                  totalBytes > 0
+                    ? formatEta((totalBytes - downloadedBytes) / bytesPerSecond)
+                    : undefined,
               });
             }
           }
@@ -166,11 +213,15 @@ export class AssetDownloader {
           });
         }
 
+        const totalElapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
+        const averageBytesPerSecond = downloadedBytes / totalElapsedSeconds;
         await onProgress?.({
           stage: "download",
           percent: totalBytes > 0 ? 100 : undefined,
           bytesDownloaded: downloadedBytes,
           totalBytes: totalBytes > 0 ? totalBytes : undefined,
+          speed: formatBytesPerSecond(averageBytesPerSecond),
+          eta: totalBytes > 0 ? "0s" : undefined,
         });
       },
       {
