@@ -11,6 +11,8 @@ export type ResolvedVariant = {
   width?: number;
   height?: number;
   name?: string;
+  durationSeconds?: number;
+  estimatedSizeBytes?: number;
 };
 
 export type ResolvedContentEntry = {

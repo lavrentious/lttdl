@@ -5,6 +5,7 @@ import { DownloadError } from "src/errors/download-error";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
 import { getVideoResolution } from "src/utils/video";
+import { isLikelyOversizeVideo } from "src/dl/size-guard";
 import { AssetDownloader } from "../../asset-downloader";
 import { AssetProcessor } from "../../asset-processor";
 import type { PlatformHandler } from "../../platform-handler";
@@ -202,6 +203,15 @@ async function downloadVideoItem(
     item.media_stream.video.duration > 0
       ? item.media_stream.video.duration
       : undefined;
+  if (isLikelyOversizeVideo(durationSeconds, _maxFileSize)) {
+    logger.debug(
+      `skipping pinterest video download for ${item.origin} due to duration heuristic (${durationSeconds}s likely exceeds limit ${_maxFileSize})`,
+    );
+    return {
+      downloaded: false,
+      downloadUrl: item.origin,
+    } satisfies VideoVariant;
+  }
   const progressState: {
     bytesDownloaded?: number;
     outTimeSeconds?: number;

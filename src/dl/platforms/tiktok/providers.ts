@@ -105,6 +105,7 @@ function normalizeV1Response(res: TiktokAPIResponse): TiktokProviderResult {
     title: kind === "audio" ? result.music?.title || null : null,
     entries: normalizeEntries("v1", kind, {
       videoUrls: result.video?.playAddr || [],
+      videoDuration: result.video?.duration || undefined,
       imageUrls: result.images || [],
       audioUrls: result.music?.playUrl || [],
       audioName: result.music?.title || undefined,
@@ -155,11 +156,13 @@ function normalizeEntries(
   kind: TiktokProviderResult["kind"],
   {
     videoUrls,
+    videoDuration,
     imageUrls,
     audioUrls,
     audioName,
   }: {
     videoUrls: string[];
+    videoDuration?: number;
     imageUrls: string[];
     audioUrls: string[];
     audioName?: string;
@@ -167,7 +170,9 @@ function normalizeEntries(
 ): ResolvedContentEntry[] {
   switch (kind) {
     case "video":
-      return buildPrimaryEntry(provider, videoUrls);
+      return buildPrimaryEntry(provider, videoUrls, {
+        durationSeconds: videoDuration,
+      });
     case "image":
       return buildGalleryEntries(provider, imageUrls);
     case "audio":

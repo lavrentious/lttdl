@@ -2,6 +2,11 @@ import { randomUUIDv7 } from "bun";
 import { existsSync, readdirSync, rmSync } from "fs";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
+import {
+  buildOversizeMessage,
+  estimateVideoSizeFromDuration,
+  isLikelyOversizeVideo,
+} from "src/dl/size-guard";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
 import { getVideoResolution } from "src/utils/video";
@@ -18,6 +23,9 @@ type YoutubeMetadata = {
   width?: number;
   height?: number;
   webpage_url?: string;
+  duration?: number;
+  filesize?: number;
+  filesize_approx?: number;
 };
 
 type CommandResult = {
@@ -165,6 +173,24 @@ function parseMetadata(stdout: string): YoutubeMetadata {
   }
 }
 
+async function fetchMetadata(
+  runCommandImpl: YoutubeHandlerDeps["runCommand"],
+  url: string,
+): Promise<YoutubeMetadata> {
+  const { exitCode, stdout, stderr } = await runCommandImpl([
+    YT_DLP_BINARY,
+    "--no-playlist",
+    "--dump-single-json",
+    url,
+  ]);
+
+  if (exitCode !== 0) {
+    throw new DownloadError(stderr.trim() || "yt-dlp metadata fetch failed");
+  }
+
+  return parseMetadata(stdout);
+}
+
 function parseProgressLine(line: string): DownloadProgress | null {
   const percentMatch = line.match(
     /^\[download\]\s+(\d+(?:\.\d+)?)% of\s+(.+?)(?: at\s+(.+?)\s+ETA\s+(.+))?$/,
@@ -278,6 +304,32 @@ export class YoutubePlatformHandler implements PlatformHandler {
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
+    const metadata = await fetchMetadata(this.deps.runCommand, url);
+    const estimatedSize =
+      typeof metadata.filesize === "number"
+        ? metadata.filesize
+        : typeof metadata.filesize_approx === "number"
+          ? metadata.filesize_approx
+          : undefined;
+    if (
+      options?.maxFileSize !== undefined &&
+      ((estimatedSize !== undefined && estimatedSize > options.maxFileSize) ||
+        (estimatedSize === undefined &&
+          preset === "best" &&
+          isLikelyOversizeVideo(metadata.duration, options.maxFileSize)))
+    ) {
+      throw new DownloadError(
+        buildOversizeMessage({
+          estimatedSizeBytes:
+            estimatedSize !== undefined
+              ? estimatedSize
+              : metadata.duration !== undefined
+                ? estimateVideoSizeFromDuration(metadata.duration)
+                : undefined,
+          exact: estimatedSize !== undefined,
+        }),
+      );
+    }
     logger.debug(
       preset === "best"
         ? "youtube best preset using mp4-first fast path with merge/remux only"
@@ -311,8 +363,11 @@ export class YoutubePlatformHandler implements PlatformHandler {
       throw new DownloadError(stderr.trim() || "yt-dlp failed");
     }
 
-    const metadata = parseMetadata(stdout);
-    logger.debug(`yt-dlp metadata: ${JSON.stringify(metadata)}`);
+    const runtimeMetadata = {
+      ...metadata,
+      ...parseMetadata(stdout),
+    };
+    logger.debug(`yt-dlp metadata: ${JSON.stringify(runtimeMetadata)}`);
     const finalPath = resolveFinalPath(tempDir, basename, preset);
     logger.debug(
       `youtube final container: ${path.extname(finalPath).replace(/^\./, "") || "unknown"}`,
@@ -336,11 +391,11 @@ export class YoutubePlatformHandler implements PlatformHandler {
           variants: [
             {
               downloaded: true,
-              downloadUrl: metadata.webpage_url || url,
+              downloadUrl: runtimeMetadata.webpage_url || url,
               path: finalPath,
               size: Bun.file(finalPath).size,
               payload: {
-                name: metadata.title,
+                name: runtimeMetadata.title,
               },
               cleanup,
             },
@@ -351,8 +406,9 @@ export class YoutubePlatformHandler implements PlatformHandler {
     }
 
     const resolution =
-      typeof metadata.width === "number" && typeof metadata.height === "number"
-        ? { width: metadata.width, height: metadata.height }
+      typeof runtimeMetadata.width === "number" &&
+      typeof runtimeMetadata.height === "number"
+        ? { width: runtimeMetadata.width, height: runtimeMetadata.height }
         : await this.deps.getVideoResolution(finalPath);
     logger.debug(
       `youtube video ready at ${finalPath} with resolution ${resolution.width}x${resolution.height}`,
@@ -364,7 +420,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
         variants: [
           {
             downloaded: true,
-            downloadUrl: metadata.webpage_url || url,
+            downloadUrl: runtimeMetadata.webpage_url || url,
             path: finalPath,
             size: Bun.file(finalPath).size,
             payload: { resolution },

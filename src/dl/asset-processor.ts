@@ -3,6 +3,7 @@ import { getImageResolution, recodeImageToJpeg } from "src/utils/image";
 import { logger } from "src/utils/logger";
 import { ensureMp4Video, getVideoResolution } from "src/utils/video";
 import { AssetDownloader } from "./asset-downloader";
+import { isLikelyOversizeVideo } from "./size-guard";
 import type {
   DownloadProgress,
   MusicVariant,
@@ -31,6 +32,19 @@ export class AssetProcessor {
         if (remoteSize > maxFileSize) {
           logger.debug(
             `skipping video download from ${variant.url} (size ${remoteSize} exceeds limit ${maxFileSize})`,
+          );
+          return {
+            downloadUrl: variant.url,
+            downloaded: false,
+          } satisfies VideoVariant;
+        }
+
+        if (
+          remoteSize === 0 &&
+          isLikelyOversizeVideo(variant.durationSeconds, maxFileSize)
+        ) {
+          logger.debug(
+            `skipping video download from ${variant.url} due to duration heuristic (${variant.durationSeconds}s likely exceeds limit ${maxFileSize})`,
           );
           return {
             downloadUrl: variant.url,
