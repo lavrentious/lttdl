@@ -1,5 +1,6 @@
 import type { Context, Filter } from "grammy";
 import type {
+  GalleryEntry,
   MusicVariant,
   PhotoVariant,
   VideoVariant,
@@ -153,4 +154,30 @@ export function buildImageLinksMessages(images: PhotoVariant[][]): string[] {
         img.find((variant) => variant.downloaded),
       ),
   );
+}
+
+export function buildGalleryLinksMessages(entries: GalleryEntry[]): string[] {
+  return entries.map((entry, i) => {
+    if (entry.kind === "image") {
+      return (
+        `item ${i + 1} (image):\n` +
+        generatePhotosLinksEntry(
+          entry.variants,
+          entry.variants.find((variant) => variant.downloaded),
+        )
+      );
+    }
+
+    return (
+      `item ${i + 1} (video):\n` +
+      entry.variants
+        .map((variant) =>
+          generateVideoLinksEntry(
+            variant,
+            entry.variants.find((candidate) => candidate.downloaded),
+          ),
+        )
+        .join("\n")
+    );
+  });
 }

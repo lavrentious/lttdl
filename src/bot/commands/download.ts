@@ -7,10 +7,12 @@ import {
 } from "grammy";
 import {
   downloadContent,
+  type GalleryEntry,
   type MusicVariant,
   type VideoVariant,
 } from "src/dl/downloader";
 import {
+  buildGalleryLinksMessages,
   buildImageLinksMessages,
   buildSingleMediaLinksMessage,
   generateMusicLinksEntry,
@@ -36,6 +38,52 @@ function deleteMessageSafe(
 ) {
   if (!message) return;
   ctx.api.deleteMessage(message.chat.id, message.message_id).catch();
+}
+
+type GalleryUploadableMedia = {
+  index: number;
+  media:
+    | ReturnType<typeof InputMediaBuilder.photo>
+    | ReturnType<typeof InputMediaBuilder.video>;
+};
+
+function getGalleryUploadableMedia(entries: GalleryEntry[]) {
+  const media: GalleryUploadableMedia[] = [];
+
+  entries.forEach((entry, index) => {
+    if (entry.kind === "image") {
+      const uploaded = entry.variants.find(
+        (variant): variant is Extract<typeof variant, { downloaded: true }> =>
+          variant.downloaded,
+      );
+      if (!uploaded) {
+        return;
+      }
+
+      media.push({
+        index,
+        media: InputMediaBuilder.photo(new InputFile(uploaded.path)),
+      });
+      return;
+    }
+
+    const uploaded = entry.variants.find(
+      (
+        variant,
+      ): variant is Extract<typeof variant, { downloaded: true }> =>
+        variant.downloaded && variant.size <= MAX_FILE_SIZE,
+    );
+    if (!uploaded) {
+      return;
+    }
+
+    media.push({
+      index,
+      media: InputMediaBuilder.video(new InputFile(uploaded.path)),
+    });
+  });
+
+  return media;
 }
 
 async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
@@ -222,6 +270,67 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       });
 
       logger.info(`sent audio ${query} to ${ctx.from?.id ?? "unknown user"}`);
+    } else if (res.contentType === "gallery") {
+      const msg2 = await ctx.reply(
+        `pinterest items downloaded, sending... (${res.entries.length} items)`,
+      );
+      const galleryLinks = buildGalleryLinksMessages(res.entries);
+      const uploadableMedia = getGalleryUploadableMedia(res.entries);
+      const skippedIndexes = new Set(
+        res.entries.map((_, index) => index).filter(
+          (index) => !uploadableMedia.some((entry) => entry.index === index),
+        ),
+      );
+
+      if (!uploadableMedia.length) {
+        cleanup();
+        deleteMessageSafe(ctx, msg1);
+        deleteMessageSafe(ctx, msg2);
+        await ctx.reply(
+          `pinterest items were resolved, but nothing uploadable was produced. sending links instead.`,
+        );
+        await sendChunkedLinks(ctx, galleryLinks);
+        await next();
+        return;
+      }
+
+      let uploadFailed = false;
+      try {
+        await ctx.api.sendChatAction(msg1.chat.id, "upload_photo");
+        for (const chunk of chunkArray(uploadableMedia, MAX_MEDIA_GROUP_SIZE)) {
+          await ctx.replyWithMediaGroup(chunk.map((entry) => entry.media));
+        }
+      } catch (err) {
+        uploadFailed = true;
+        logError(err);
+      } finally {
+        cleanup();
+        deleteMessageSafe(ctx, msg1);
+        deleteMessageSafe(ctx, msg2);
+      }
+
+      if (uploadFailed) {
+        await ctx.reply(
+          `pinterest items were downloaded, but Telegram rejected the upload. sending links instead.`,
+        );
+        await sendChunkedLinks(ctx, galleryLinks);
+        await next();
+        return;
+      }
+
+      if (skippedIndexes.size) {
+        await ctx.reply(
+          `some pinterest items could not be uploaded. sending links for the skipped items.`,
+        );
+        await sendChunkedLinks(
+          ctx,
+          galleryLinks.filter((_, index) => skippedIndexes.has(index)),
+        );
+      }
+
+      if (userSettings.verboseOutput) {
+        await sendChunkedLinks(ctx, galleryLinks);
+      }
     }
 
     await next();

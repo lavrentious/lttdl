@@ -53,6 +53,16 @@ export type MusicVariant = ContentVariant<{
   name?: string;
 }>;
 
+export type GalleryEntry =
+  | {
+      kind: "image";
+      variants: PhotoVariant[];
+    }
+  | {
+      kind: "video";
+      variants: VideoVariant[];
+    };
+
 export type DownloadResult =
   | {
       contentType: "video";
@@ -65,6 +75,10 @@ export type DownloadResult =
   | {
       contentType: "music";
       variants: MusicVariant[];
+    }
+  | {
+      contentType: "gallery";
+      entries: GalleryEntry[];
     };
 
 export type DownloadStrategy = "all" | "single";

@@ -11,6 +11,7 @@ import type {
   DownloadExecutionResult,
   DownloadOptions,
   DownloadResult,
+  GalleryEntry,
   MusicVariant,
   PhotoVariant,
   ResolvedContent,
@@ -240,6 +241,7 @@ export async function downloadContent(
 export type {
   DownloadOptions,
   DownloadResult,
+  GalleryEntry,
   MusicVariant,
   PhotoVariant,
   VideoVariant,
