@@ -200,11 +200,13 @@ function parseMetadata(stdout: string): YoutubeMetadata {
 async function fetchMetadata(
   runCommandImpl: YoutubeHandlerDeps["runCommand"],
   url: string,
+  preset: YoutubePreset,
 ): Promise<YoutubeMetadata> {
   const { exitCode, stdout, stderr } = await runCommandImpl([
     YT_DLP_BINARY,
     "--no-playlist",
     "--dump-single-json",
+    ...getPresetArgs(preset),
     url,
   ]);
 
@@ -328,7 +330,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
-    const metadata = await fetchMetadata(this.deps.runCommand, url);
+    const metadata = await fetchMetadata(this.deps.runCommand, url, preset);
     const estimatedSize =
       typeof metadata.filesize === "number"
         ? metadata.filesize
