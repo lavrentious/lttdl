@@ -83,12 +83,25 @@ export type DownloadResult =
 
 export type DownloadStrategy = "all" | "single";
 
-export type DownloadProgress =
+export type DownloadProgress = { percent?: number } & (
+  | {
+      stage: "status";
+      message: string;
+    }
   | {
       stage: "download";
-      percent: number;
+      percent?: number;
+      bytesDownloaded?: number;
+      totalBytes?: number;
       speed?: string;
       eta?: string;
+      message?: string;
+    }
+  | {
+      stage: "batch";
+      current: number;
+      total: number;
+      message: string;
     }
   | {
       stage: "postprocess";
@@ -97,7 +110,8 @@ export type DownloadProgress =
   | {
       stage: "completed";
       message: string;
-    };
+    }
+);
 
 export type DownloadOptions = {
   tempDir?: string;

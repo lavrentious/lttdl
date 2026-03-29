@@ -34,6 +34,7 @@ function buildVideoItem(id: number) {
 
 describe("PinterestPlatformHandler", () => {
   test("returns image result for all-image boards", async () => {
+    const progressStages: string[] = [];
     const handler = new PinterestPlatformHandler({
       which: () => "/usr/bin/pinterest-dl",
       runCommand: async () => ({
@@ -49,31 +50,45 @@ describe("PinterestPlatformHandler", () => {
         }),
         stderr: "",
       }),
-      downloadImageItem: async (item) => ({
-        downloaded: true,
-        downloadUrl: item.origin,
-        path: `/tmp/${item.id}.jpg`,
-        size: 1,
-        payload: {
-          resolution: {
-            width: 800,
-            height: 1200,
+      downloadImageItem: async (item, _tempDir, onProgress) => {
+        await onProgress?.({
+          stage: "download",
+          percent: 50,
+        });
+        return {
+          downloaded: true,
+          downloadUrl: item.origin,
+          path: `/tmp/${item.id}.jpg`,
+          size: 1,
+          payload: {
+            resolution: {
+              width: 800,
+              height: 1200,
+            },
           },
-        },
-      }),
+        };
+      },
       downloadVideoItem: async () => ({
         downloaded: false,
         downloadUrl: "https://example.com",
       }),
     });
 
-    const result = await handler.download!("https://pin.it/example", {}, { tempDir: "/tmp" });
+    const result = await handler.download!("https://pin.it/example", {}, {
+      tempDir: "/tmp",
+      onProgress: (progress) => {
+        progressStages.push(progress.stage);
+      },
+    });
 
     expect(result.res.contentType).toBe("image");
     if (result.res.contentType !== "image") {
       throw new Error("expected image result");
     }
     expect(result.res.variants).toHaveLength(2);
+    expect(progressStages).toContain("status");
+    expect(progressStages).toContain("download");
+    expect(progressStages).toContain("completed");
   });
 
   test("returns gallery result for mixed boards and limits item count to 100", async () => {

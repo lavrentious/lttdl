@@ -10,6 +10,7 @@ import { YoutubePlatformHandler } from "./platforms/youtube/youtube-platform-han
 import type {
   DownloadExecutionResult,
   DownloadOptions,
+  DownloadProgress,
   DownloadResult,
   GalleryEntry,
   MusicVariant,
@@ -59,11 +60,138 @@ const defaultRouter = new DownloadRouter([
 
 const assetProcessor = new AssetProcessor(new AssetDownloader());
 
+type AggregateDownloadState = {
+  percent?: number;
+  bytesDownloaded?: number;
+  totalBytes?: number;
+  speed?: string;
+  eta?: string;
+};
+
+type AggregateDownloadSummary = {
+  percentSum: number;
+  percentCount: number;
+  bytesDownloaded: number;
+  totalBytes: number;
+};
+
+function createSequentialProgressMapper(
+  options: {
+    index: number;
+    total: number;
+    message: string;
+    onProgress?: (progress: DownloadProgress) => void | Promise<void>;
+  },
+) {
+  return async (progress: DownloadProgress) => {
+    if (!options.onProgress) {
+      return;
+    }
+
+    if (progress.stage !== "download") {
+      await options.onProgress(progress);
+      return;
+    }
+
+    const sequentialPercent =
+      typeof progress.percent === "number"
+        ? ((options.index + progress.percent / 100) / Math.max(options.total, 1)) * 100
+        : undefined;
+
+    await options.onProgress({
+      stage: "download",
+      message: options.message,
+      percent: sequentialPercent,
+      bytesDownloaded: progress.bytesDownloaded,
+      totalBytes: progress.totalBytes,
+      speed: progress.speed,
+      eta: progress.eta,
+    });
+  };
+}
+
+function createAggregateProgressMapper(
+  options: {
+    total: number;
+    message: string;
+    onProgress?: (progress: DownloadProgress) => void | Promise<void>;
+  },
+) {
+  const states: AggregateDownloadState[] = Array.from({ length: options.total }, () => ({}));
+
+  return (index: number) =>
+    async (progress: DownloadProgress) => {
+      if (!options.onProgress) {
+        return;
+      }
+
+      if (progress.stage !== "download") {
+        await options.onProgress(progress);
+        return;
+      }
+
+      states[index] = {
+        percent: progress.percent,
+        bytesDownloaded: progress.bytesDownloaded,
+        totalBytes: progress.totalBytes,
+        speed: progress.speed,
+        eta: progress.eta,
+      };
+
+      const aggregate = states.reduce<AggregateDownloadSummary>(
+        (acc, state) => {
+          if (typeof state.percent === "number") {
+            acc.percentSum += state.percent;
+            acc.percentCount += 1;
+          }
+
+          if (typeof state.bytesDownloaded === "number") {
+            acc.bytesDownloaded += state.bytesDownloaded;
+          }
+
+          if (typeof state.totalBytes === "number") {
+            acc.totalBytes += state.totalBytes;
+          }
+
+          return acc;
+        },
+        {
+          percentSum: 0,
+          percentCount: 0,
+          bytesDownloaded: 0,
+          totalBytes: 0,
+        },
+      );
+
+      const currentState = states[index];
+      const totalBytes = aggregate.totalBytes > 0 ? aggregate.totalBytes : undefined;
+      const bytesDownloaded =
+        totalBytes !== undefined ? aggregate.bytesDownloaded : undefined;
+      const percent =
+        totalBytes !== undefined && totalBytes > 0
+          ? (aggregate.bytesDownloaded / totalBytes) * 100
+          : aggregate.percentCount > 0
+            ? aggregate.percentSum / Math.max(options.total, 1)
+            : undefined;
+
+      await options.onProgress({
+        stage: "download",
+        message: options.message,
+        percent,
+        bytesDownloaded,
+        totalBytes,
+        speed: currentState?.speed,
+        eta: currentState?.eta,
+      });
+    };
+}
+
 async function buildVideoResult(
   resolved: ResolvedContent,
   tempDir: string,
   strategy: NonNullable<DownloadOptions["strategy"]>,
   maxFileSize?: number,
+  onProgress?: (progress: DownloadProgress) => void | Promise<void>,
 ): Promise<Extract<DownloadResult, { contentType: "video" }>> {
   const entry = resolved.entries[0];
   if (!entry) {
@@ -72,22 +200,38 @@ async function buildVideoResult(
 
   const variants: VideoVariant[] = [];
   if (strategy === "all") {
+    const progressMapper = createAggregateProgressMapper({
+      total: entry.variants.length,
+      message: "downloading video variants",
+      onProgress,
+    });
     variants.push(
       ...sortByResolution(
         await mapWithConcurrency(
           entry.variants,
           MAX_DOWNLOAD_CONCURRENCY,
-          async (variant) =>
-            await assetProcessor.downloadVideoVariant(variant, tempDir, maxFileSize),
+          async (variant, index) =>
+            await assetProcessor.downloadVideoVariant(
+              variant,
+              tempDir,
+              maxFileSize,
+              progressMapper(index),
+            ),
         ),
       ),
     );
   } else {
-    for (const variant of entry.variants) {
+    for (const [index, variant] of entry.variants.entries()) {
       const downloaded = await assetProcessor.downloadVideoVariant(
         variant,
         tempDir,
         maxFileSize,
+        createSequentialProgressMapper({
+          index,
+          total: entry.variants.length,
+          message: "downloading video",
+          onProgress,
+        }),
       );
       variants.push(downloaded);
       if (
@@ -109,11 +253,12 @@ async function buildImageResult(
   resolved: ResolvedContent,
   tempDir: string,
   strategy: NonNullable<DownloadOptions["strategy"]>,
+  onProgress?: (progress: DownloadProgress) => void | Promise<void>,
 ): Promise<Extract<DownloadResult, { contentType: "image" }>> {
   const variants = await mapWithConcurrency(
     resolved.entries,
     MAX_IMAGE_ENTRY_CONCURRENCY,
-    async (entry) => {
+    async (entry, entryIndex) => {
       if (strategy === "all") {
         return sortByResolution(
           await mapWithConcurrency(
@@ -127,7 +272,17 @@ async function buildImageResult(
 
       const attempted: PhotoVariant[] = [];
       for (const variant of entry.variants) {
-        const downloaded = await assetProcessor.downloadImageVariant(variant, tempDir);
+        const total = Math.max(resolved.entries.length, 1);
+        const downloaded = await assetProcessor.downloadImageVariant(
+          variant,
+          tempDir,
+          createSequentialProgressMapper({
+            index: entryIndex,
+            total,
+            message: `downloading image ${entryIndex + 1}/${resolved.entries.length}`,
+            onProgress,
+          }),
+        );
         attempted.push(downloaded);
         if (downloaded.downloaded) {
           return attempted;
@@ -156,6 +311,7 @@ async function buildAudioResult(
   tempDir: string,
   strategy: NonNullable<DownloadOptions["strategy"]>,
   maxFileSize?: number,
+  onProgress?: (progress: DownloadProgress) => void | Promise<void>,
 ): Promise<Extract<DownloadResult, { contentType: "music" }>> {
   const entry = resolved.entries[0];
   if (!entry) {
@@ -164,26 +320,38 @@ async function buildAudioResult(
 
   const variants: MusicVariant[] = [];
   if (strategy === "all") {
+    const progressMapper = createAggregateProgressMapper({
+      total: entry.variants.length,
+      message: "downloading audio variants",
+      onProgress,
+    });
     variants.push(
       ...(await mapWithConcurrency(
         entry.variants,
         MAX_DOWNLOAD_CONCURRENCY,
-        async (variant) =>
+        async (variant, index) =>
           await assetProcessor.downloadAudioVariant(
             variant,
             tempDir,
             resolved.title,
             maxFileSize,
+            progressMapper(index),
           ),
       )),
     );
   } else {
-    for (const variant of entry.variants) {
+    for (const [index, variant] of entry.variants.entries()) {
       const downloaded = await assetProcessor.downloadAudioVariant(
         variant,
         tempDir,
         resolved.title,
         maxFileSize,
+        createSequentialProgressMapper({
+          index,
+          total: entry.variants.length,
+          message: "downloading audio",
+          onProgress,
+        }),
       );
       variants.push(downloaded);
       if (
@@ -220,14 +388,27 @@ export async function downloadContent(
   const tempDir = options.tempDir || config.get("TEMP_DIR");
   const strategy = options.strategy || "all";
   const maxFileSize = options.maxFileSize;
+  const onProgress = options.onProgress;
 
   let res: DownloadResult;
   if (resolved.kind === "video") {
-    res = await buildVideoResult(resolved, tempDir, strategy, maxFileSize);
+    res = await buildVideoResult(
+      resolved,
+      tempDir,
+      strategy,
+      maxFileSize,
+      onProgress,
+    );
   } else if (resolved.kind === "image") {
-    res = await buildImageResult(resolved, tempDir, strategy);
+    res = await buildImageResult(resolved, tempDir, strategy, onProgress);
   } else {
-    res = await buildAudioResult(resolved, tempDir, strategy, maxFileSize);
+    res = await buildAudioResult(
+      resolved,
+      tempDir,
+      strategy,
+      maxFileSize,
+      onProgress,
+    );
   }
 
   return {

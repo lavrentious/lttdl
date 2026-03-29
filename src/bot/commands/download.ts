@@ -67,7 +67,11 @@ function formatProgressBar(percent: number): string {
   return bar;
 }
 
-function createYoutubeProgressUpdater(
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function createProgressUpdater(
   ctx: Filter<Context, "message">,
   loadingMessage: { chat: { id: number }; message_id: number },
 ) {
@@ -76,19 +80,46 @@ function createYoutubeProgressUpdater(
 
   return async (progress: DownloadProgress) => {
     let nextText: string;
-    if (progress.stage === "download") {
-      const percent = Number.isFinite(progress.percent)
-        ? Math.max(0, Math.min(100, progress.percent))
-        : 0;
+    if (progress.stage === "status") {
+      nextText = progress.message;
+    } else if (progress.stage === "download") {
+      const hasPercent = Number.isFinite(progress.percent);
+      const percent = hasPercent
+        ? Math.max(0, Math.min(100, progress.percent ?? 0))
+        : undefined;
+      const lines = [progress.message || "downloading..."];
+
+      if (typeof percent === "number") {
+        lines.push(`\`${formatProgressBar(percent)}\` ${percent.toFixed(1)}%`);
+      }
+
+      if (typeof progress.bytesDownloaded === "number") {
+        const sizeText =
+          typeof progress.totalBytes === "number"
+            ? `${formatMegabytes(progress.bytesDownloaded)} / ${formatMegabytes(progress.totalBytes)}`
+            : formatMegabytes(progress.bytesDownloaded);
+        lines.push(sizeText);
+      }
+
+      if (progress.speed) {
+        lines.push(`speed: ${progress.speed}`);
+      }
+
+      if (progress.eta) {
+        lines.push(`eta: ${progress.eta}`);
+      }
+
+      nextText = lines.join("\n");
+    } else if (progress.stage === "batch") {
+      const percent =
+        progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
       nextText =
-        `downloading youtube...\n` +
-        `\`${formatProgressBar(percent)}\` ${percent.toFixed(1)}%` +
-        (progress.speed ? `\nspeed: ${progress.speed}` : "") +
-        (progress.eta ? `\neta: ${progress.eta}` : "");
+        `${progress.message}\n` +
+        `\`${formatProgressBar(percent)}\` ${progress.current}/${progress.total}`;
     } else if (progress.stage === "postprocess") {
-      nextText = `processing youtube...\n${progress.message}`;
+      nextText = `processing...\n${progress.message}`;
     } else {
-      nextText = `youtube download complete`;
+      nextText = progress.message;
     }
 
     const now = Date.now();
@@ -96,7 +127,7 @@ function createYoutubeProgressUpdater(
       nextText === lastText ||
       (now - lastSentAt < PROGRESS_UPDATE_INTERVAL_MS &&
         progress.stage === "download" &&
-        progress.percent < 100)
+        (progress.percent ?? 0) < 100)
     ) {
       return;
     }
@@ -235,7 +266,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     ? getUserSettings(ctx.from.id)
     : getDefaultUserSettings();
   const downloadStrategy = userSettings.verboseOutput ? "all" : "single";
-  const youtubeProgressUpdater = createYoutubeProgressUpdater(ctx, msg1);
+  const progressUpdater = createProgressUpdater(ctx, msg1);
 
   try {
     const { res, cleanup } = await downloadContent(
@@ -247,7 +278,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       {
         strategy: downloadStrategy,
         maxFileSize: MAX_FILE_SIZE,
-        onProgress: youtubeProgressUpdater,
+        onProgress: progressUpdater,
       },
     );
 

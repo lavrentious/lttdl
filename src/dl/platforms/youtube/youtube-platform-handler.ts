@@ -39,6 +39,31 @@ type YoutubeHandlerDeps = {
 
 const YT_DLP_BINARY = "yt-dlp";
 
+function parseSizeToBytes(size: string): number | undefined {
+  const normalized = size.replace(/~/g, "").trim();
+  const match = normalized.match(/^(\d+(?:\.\d+)?)\s*([KMGT]?i?B)$/i);
+  if (!match) {
+    return undefined;
+  }
+
+  const value = Number(match[1]);
+  const unit = match[2]!.toUpperCase();
+  const multipliers: Record<string, number> = {
+    B: 1,
+    KB: 1000,
+    MB: 1000 ** 2,
+    GB: 1000 ** 3,
+    TB: 1000 ** 4,
+    KIB: 1024,
+    MIB: 1024 ** 2,
+    GIB: 1024 ** 3,
+    TIB: 1024 ** 4,
+  };
+
+  const multiplier = multipliers[unit];
+  return multiplier ? value * multiplier : undefined;
+}
+
 async function readStream(
   stream: ReadableStream<Uint8Array> | null | undefined,
   onLine?: (line: string) => void | Promise<void>,
@@ -142,14 +167,19 @@ function parseMetadata(stdout: string): YoutubeMetadata {
 
 function parseProgressLine(line: string): DownloadProgress | null {
   const percentMatch = line.match(
-    /^\[download\]\s+(\d+(?:\.\d+)?)% of .*?(?: at\s+(.+?)\s+ETA\s+(.+))?$/,
+    /^\[download\]\s+(\d+(?:\.\d+)?)% of\s+(.+?)(?: at\s+(.+?)\s+ETA\s+(.+))?$/,
   );
   if (percentMatch) {
+    const totalBytes = parseSizeToBytes(percentMatch[2] || "");
+    const percent = Number(percentMatch[1]);
     return {
       stage: "download",
-      percent: Number(percentMatch[1]),
-      speed: percentMatch[2]?.trim(),
-      eta: percentMatch[3]?.trim(),
+      percent,
+      bytesDownloaded:
+        totalBytes !== undefined ? (totalBytes * percent) / 100 : undefined,
+      totalBytes,
+      speed: percentMatch[3]?.trim(),
+      eta: percentMatch[4]?.trim(),
     };
   }
 

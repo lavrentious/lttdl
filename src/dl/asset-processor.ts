@@ -2,7 +2,13 @@ import { getImageResolution, recodeImageToJpeg } from "src/utils/image";
 import { logger } from "src/utils/logger";
 import { getVideoResolution } from "src/utils/video";
 import { AssetDownloader } from "./asset-downloader";
-import type { MusicVariant, PhotoVariant, ResolvedVariant, VideoVariant } from "./types";
+import type {
+  DownloadProgress,
+  MusicVariant,
+  PhotoVariant,
+  ResolvedVariant,
+  VideoVariant,
+} from "./types";
 
 export class AssetProcessor {
   constructor(private readonly downloader: AssetDownloader) {}
@@ -11,6 +17,7 @@ export class AssetProcessor {
     variant: ResolvedVariant,
     tempDir: string,
     maxFileSize?: number,
+    onProgress?: (progress: DownloadProgress) => void | Promise<void>,
   ): Promise<VideoVariant> {
     logger.debug(`downloading video from ${variant.url}...`);
     let path: string | null = null;
@@ -30,7 +37,7 @@ export class AssetProcessor {
         }
       }
 
-      path = await this.downloader.downloadFile(variant.url, tempDir);
+      path = await this.downloader.downloadFile(variant.url, tempDir, undefined, onProgress);
       const downloadedPath = path;
       const resolution = await getVideoResolution(downloadedPath);
 
@@ -59,12 +66,13 @@ export class AssetProcessor {
   async downloadImageVariant(
     variant: ResolvedVariant,
     tempDir: string,
+    onProgress?: (progress: DownloadProgress) => void | Promise<void>,
   ): Promise<PhotoVariant> {
     logger.debug(`downloading image from ${variant.url}...`);
     let path: string | null = null;
     let recodedPath: string | null = null;
     try {
-      path = await this.downloader.downloadFile(variant.url, tempDir);
+      path = await this.downloader.downloadFile(variant.url, tempDir, undefined, onProgress);
       recodedPath = `${path}.jpg`;
       const downloadedPath = path;
       const finalPath = recodedPath;
@@ -103,6 +111,7 @@ export class AssetProcessor {
     tempDir: string,
     contentName: string | null,
     maxFileSize?: number,
+    onProgress?: (progress: DownloadProgress) => void | Promise<void>,
   ): Promise<MusicVariant> {
     logger.debug(`downloading audio from ${variant.url}...`);
     let path: string | null = null;
@@ -122,7 +131,7 @@ export class AssetProcessor {
         }
       }
 
-      path = await this.downloader.downloadFile(variant.url, tempDir);
+      path = await this.downloader.downloadFile(variant.url, tempDir, undefined, onProgress);
       const downloadedPath = path;
 
       return {

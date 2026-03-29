@@ -5,6 +5,8 @@ import { logError, logger } from "src/utils/logger";
 import { initUserSettingsDb } from "src/settings/user-settings";
 import { downloadCommand } from "./commands/download";
 
+let botInstance: Bot | null = null;
+
 function startupCheck() {
   const ffprobePath = Bun.which("ffprobe");
   const ytDlpPath = Bun.which("yt-dlp");
@@ -30,7 +32,7 @@ function startupCheck() {
   }
 }
 
-export function initBot() {
+function createBot() {
   startupCheck();
   initUserSettingsDb();
 
@@ -50,10 +52,30 @@ export function initBot() {
 
   bot.catch(logError);
 
-  bot.start({
-    drop_pending_updates: true,
-    onStart: () => {
-      logger.info("bot started and listening...");
-    },
-  });
+  return bot;
+}
+
+export async function initBot() {
+  if (!botInstance) {
+    botInstance = createBot();
+  }
+
+  if (botInstance.isRunning()) {
+    logger.warn("bot start requested while polling is already running");
+    return;
+  }
+
+  try {
+    await botInstance.start({
+      drop_pending_updates: true,
+      onStart: () => {
+        logger.info("bot started and listening...");
+      },
+    });
+  } catch (error) {
+    logger.error("bot polling stopped unexpectedly");
+    throw error;
+  }
+
+  throw new Error("bot polling stopped without an explicit shutdown");
 }

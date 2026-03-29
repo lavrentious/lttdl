@@ -11,6 +11,7 @@ import type { PlatformHandler } from "../../platform-handler";
 import type {
   DownloadExecutionResult,
   DownloadOptions,
+  DownloadProgress,
   GalleryEntry,
   PhotoVariant,
   ResolvedVariant,
@@ -56,32 +57,87 @@ type CommandResult = {
   stderr: string;
 };
 
+type CommandHooks = {
+  onStdoutLine?: (line: string) => void | Promise<void>;
+  onStderrLine?: (line: string) => void | Promise<void>;
+};
+
 type PinterestHandlerDeps = {
   which: (binary: string) => string | null;
-  runCommand: (cmd: string[]) => Promise<CommandResult>;
+  runCommand: (cmd: string[], hooks?: CommandHooks) => Promise<CommandResult>;
   downloadImageItem: (
     item: PinterestItem,
     tempDir: string,
+    onProgress?: (progress: DownloadProgress) => void | Promise<void>,
   ) => Promise<PhotoVariant>;
   downloadVideoItem: (
     item: PinterestItem,
     tempDir: string,
     maxFileSize?: number,
+    onProgress?: (progress: DownloadProgress) => void | Promise<void>,
   ) => Promise<VideoVariant>;
 };
 
-async function runCommand(cmd: string[]): Promise<CommandResult> {
-  logger.debug(`running pinterest-dl command: ${cmd.join(" ")}`);
-  const process = Bun.spawn({
+async function readStream(
+  stream: ReadableStream<Uint8Array> | null | undefined,
+  onLine?: (line: string) => void | Promise<void>,
+): Promise<string> {
+  if (!stream) {
+    return "";
+  }
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let output = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    const chunk = decoder.decode(value, { stream: true });
+    output += chunk;
+    buffer += chunk;
+
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex >= 0) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (line) {
+        await onLine?.(line);
+      }
+      newlineIndex = buffer.indexOf("\n");
+    }
+  }
+
+  const tail = decoder.decode();
+  if (tail) {
+    output += tail;
+    buffer += tail;
+  }
+
+  const finalLine = buffer.trim();
+  if (finalLine) {
+    await onLine?.(finalLine);
+  }
+
+  return output;
+}
+
+async function runCommand(cmd: string[], hooks: CommandHooks = {}): Promise<CommandResult> {
+  logger.debug(`running command: ${cmd.join(" ")}`);
+  const spawned = Bun.spawn({
     cmd,
     stdout: "pipe",
     stderr: "pipe",
   });
 
   const [exitCode, stdout, stderr] = await Promise.all([
-    process.exited,
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
+    spawned.exited,
+    readStream(spawned.stdout, hooks.onStdoutLine),
+    readStream(spawned.stderr, hooks.onStderrLine),
   ]);
 
   return {
@@ -94,6 +150,7 @@ async function runCommand(cmd: string[]): Promise<CommandResult> {
 async function downloadImageItem(
   item: PinterestItem,
   tempDir: string,
+  onProgress?: (progress: DownloadProgress) => void | Promise<void>,
 ): Promise<PhotoVariant> {
   const assetProcessor = new AssetProcessor(new AssetDownloader());
   const variant = await assetProcessor.downloadImageVariant(
@@ -104,6 +161,7 @@ async function downloadImageItem(
       height: item.resolution?.y,
     } satisfies ResolvedVariant,
     tempDir,
+    onProgress,
   );
 
   return {
@@ -116,6 +174,7 @@ async function downloadVideoItem(
   item: PinterestItem,
   tempDir: string,
   _maxFileSize?: number,
+  onProgress?: (progress: DownloadProgress) => void | Promise<void>,
 ): Promise<VideoVariant> {
   const videoUrl = item.media_stream?.video?.url;
   if (!videoUrl) {
@@ -138,16 +197,89 @@ async function downloadVideoItem(
 
   const basename = randomUUIDv7();
   const outputPath = path.join(tempDir, `${basename}.mp4`);
+  const durationSeconds =
+    typeof item.media_stream?.video?.duration === "number" &&
+    item.media_stream.video.duration > 0
+      ? item.media_stream.video.duration
+      : undefined;
+  const progressState: {
+    bytesDownloaded?: number;
+    outTimeSeconds?: number;
+    speed?: string;
+  } = {};
   logger.debug(`downloading pinterest video from ${videoUrl} to ${outputPath}`);
+  await onProgress?.({
+    stage: "postprocess",
+    message: `downloading video stream for ${item.origin}`,
+  });
   const { exitCode, stderr } = await runCommand([
     ffmpegPath,
     "-y",
+    "-nostats",
+    "-progress",
+    "pipe:2",
     "-i",
     videoUrl,
     "-c",
     "copy",
     outputPath,
-  ]);
+  ], {
+    onStderrLine: async (line) => {
+      const [key, rawValue = ""] = line.split("=", 2);
+      const value = rawValue.trim();
+
+      if (!key) {
+        return;
+      }
+
+      if (key === "total_size") {
+        const bytesDownloaded = Number(value);
+        if (Number.isFinite(bytesDownloaded) && bytesDownloaded >= 0) {
+          progressState.bytesDownloaded = bytesDownloaded;
+        }
+      } else if (key === "out_time_ms") {
+        const outTimeMs = Number(value);
+        if (Number.isFinite(outTimeMs) && outTimeMs >= 0) {
+          progressState.outTimeSeconds = outTimeMs / 1_000_000;
+        }
+      } else if (key === "speed") {
+        progressState.speed = value;
+      } else if (key !== "progress") {
+        return;
+      }
+
+      if (key === "progress" && value === "continue") {
+        await onProgress?.({
+          stage: "download",
+          message: "downloading pinterest video",
+          percent:
+            durationSeconds && progressState.outTimeSeconds !== undefined
+              ? Math.min((progressState.outTimeSeconds / durationSeconds) * 100, 100)
+              : undefined,
+          bytesDownloaded: progressState.bytesDownloaded,
+          speed: progressState.speed,
+          eta:
+            durationSeconds &&
+            progressState.outTimeSeconds !== undefined &&
+            progressState.speed &&
+            progressState.outTimeSeconds < durationSeconds
+              ? `${Math.max(
+                  Math.ceil(durationSeconds - progressState.outTimeSeconds),
+                  0,
+                )}s`
+              : undefined,
+        });
+      } else if (key === "progress" && value === "end") {
+        await onProgress?.({
+          stage: "download",
+          message: "downloading pinterest video",
+          percent: 100,
+          bytesDownloaded: progressState.bytesDownloaded,
+          speed: progressState.speed,
+        });
+      }
+    },
+  });
 
   if (exitCode !== 0 || !existsSync(outputPath)) {
     logger.warn(`failed to download pinterest video: ${stderr.trim()}`);
@@ -232,6 +364,10 @@ export class PinterestPlatformHandler implements PlatformHandler {
       throw new DownloadError("pinterest-dl is not installed");
     }
 
+    await options?.onProgress?.({
+      stage: "status",
+      message: "resolving pinterest items...",
+    });
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const { exitCode, stdout, stderr } = await this.deps.runCommand([
       PINTEREST_DL_BINARY,
@@ -262,7 +398,40 @@ export class PinterestPlatformHandler implements PlatformHandler {
     }
 
     const entries: GalleryEntry[] = [];
-    for (const item of limitedItems) {
+    for (const [index, item] of limitedItems.entries()) {
+      await options?.onProgress?.({
+        stage: "batch",
+        current: index,
+        total: limitedItems.length,
+        message: `processing pinterest item ${index + 1}/${limitedItems.length}`,
+      });
+
+      const perItemProgress = async (progress: DownloadProgress) => {
+        if (!options?.onProgress) {
+          return;
+        }
+
+        if (progress.stage === "download") {
+          const aggregatePercent =
+            typeof progress.percent === "number"
+              ? ((index + progress.percent / 100) / Math.max(limitedItems.length, 1)) * 100
+              : undefined;
+
+          await options.onProgress({
+            stage: "download",
+            message: `downloading pinterest item ${index + 1}/${limitedItems.length}`,
+            percent: aggregatePercent,
+            bytesDownloaded: progress.bytesDownloaded,
+            totalBytes: progress.totalBytes,
+            speed: progress.speed,
+            eta: progress.eta,
+          });
+          return;
+        }
+
+        await options.onProgress(progress);
+      };
+
       if (classifyItem(item) === "video") {
         entries.push({
           kind: "video",
@@ -271,16 +440,22 @@ export class PinterestPlatformHandler implements PlatformHandler {
               item,
               tempDir,
               options?.maxFileSize,
+              perItemProgress,
             ),
           ],
         });
       } else {
         entries.push({
           kind: "image",
-          variants: [await this.deps.downloadImageItem(item, tempDir)],
+          variants: [await this.deps.downloadImageItem(item, tempDir, perItemProgress)],
         });
       }
     }
+
+    await options?.onProgress?.({
+      stage: "completed",
+      message: "pinterest download complete",
+    });
 
     const cleanup = () => {
       for (const entry of entries) {

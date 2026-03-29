@@ -26,8 +26,18 @@ async function main() {
 
   process.on("uncaughtException", (e) => logError(e));
   process.on("unhandledRejection", (e) => logError(e));
+  process.on("beforeExit", (code) => {
+    logger.warn(`process beforeExit with code ${code}`);
+  });
+  process.on("exit", (code) => {
+    logger.warn(`process exit with code ${code}`);
+  });
 
-  initBot();
+  await initBot();
 }
 
-main();
+main().catch((error) => {
+  logError(error);
+  logger.error("app stopped unexpectedly");
+  process.exit(1);
+});

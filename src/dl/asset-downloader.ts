@@ -1,7 +1,9 @@
 import { randomUUIDv7 } from "bun";
+import { createWriteStream, mkdirSync } from "fs";
 import path from "path";
-import { config } from "src/utils/env-validation";
 import { retryAsync } from "src/utils/async";
+import { config } from "src/utils/env-validation";
+import type { DownloadProgress } from "./types";
 
 const FETCH_INFO_TIMEOUT_MS = 15000;
 const FILE_DOWNLOAD_TIMEOUT_MS = 45000;
@@ -67,18 +69,82 @@ export class AssetDownloader {
     );
   }
 
-  async downloadFile(url: string, dir?: string, name?: string): Promise<string> {
+  async downloadFile(
+    url: string,
+    dir?: string,
+    name?: string,
+    onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+  ): Promise<string> {
     const resolvedDir = dir || config.get("TEMP_DIR");
     const resolvedName = name || randomUUIDv7();
     const outputPath = path.join(resolvedDir, resolvedName);
-    const arrayBuffer = await retryAsync(
+    mkdirSync(resolvedDir, { recursive: true });
+    await retryAsync(
       async () => {
         const res = await fetchWithTimeout(url, FILE_DOWNLOAD_TIMEOUT_MS);
         if (!res.ok) {
           throw new Error(`Failed to download: ${res.status}`);
         }
+        if (!res.body) {
+          throw new Error("download response has no body");
+        }
 
-        return await res.arrayBuffer();
+        const totalBytesFromGet = parseInt(
+          res.headers.get("Content-Length") || "0",
+        );
+        const totalBytes =
+          totalBytesFromGet > 0
+            ? totalBytesFromGet
+            : await this.getRemoteContentLength(url).catch(() => 0);
+        const reader = res.body.getReader();
+        const output = createWriteStream(outputPath, { flags: "w" });
+        let downloadedBytes = 0;
+        let lastProgressAt = 0;
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+
+            if (!value) {
+              continue;
+            }
+
+            downloadedBytes += value.byteLength;
+            if (!output.write(Buffer.from(value))) {
+              await new Promise<void>((resolve) =>
+                output.once("drain", resolve),
+              );
+            }
+
+            const now = Date.now();
+            if (now - lastProgressAt >= 500) {
+              lastProgressAt = now;
+              await onProgress?.({
+                stage: "download",
+                percent:
+                  totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : undefined,
+                bytesDownloaded: downloadedBytes,
+                totalBytes: totalBytes > 0 ? totalBytes : undefined,
+              });
+            }
+          }
+        } finally {
+          output.end();
+          await new Promise<void>((resolve, reject) => {
+            output.once("close", resolve);
+            output.once("error", reject);
+          });
+        }
+
+        await onProgress?.({
+          stage: "download",
+          percent: totalBytes > 0 ? 100 : undefined,
+          bytesDownloaded: downloadedBytes,
+          totalBytes: totalBytes > 0 ? totalBytes : undefined,
+        });
       },
       {
         retries: FILE_DOWNLOAD_RETRIES,
@@ -86,7 +152,6 @@ export class AssetDownloader {
         shouldRetry: isRetryableNetworkError,
       },
     );
-    await Bun.write(outputPath, arrayBuffer, { createPath: true });
 
     return outputPath;
   }
