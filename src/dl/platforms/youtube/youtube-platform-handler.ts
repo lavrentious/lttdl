@@ -26,6 +26,32 @@ type YoutubeMetadata = {
   duration?: number;
   filesize?: number;
   filesize_approx?: number;
+  formats?: YoutubeFormat[];
+};
+
+type YoutubeFormat = {
+  format_id?: string;
+  ext?: string;
+  filesize?: number;
+  filesize_approx?: number;
+  tbr?: number;
+  abr?: number;
+  vbr?: number;
+  width?: number;
+  height?: number;
+  fps?: number;
+  vcodec?: string;
+  acodec?: string;
+  protocol?: string;
+};
+
+type DownloadPlan = {
+  kind: "video" | "audio";
+  formatArgs: string[];
+  postprocessArgs: string[];
+  estimatedSizeBytes?: number;
+  description: string;
+  verboseDetails?: string;
 };
 
 type CommandResult = {
@@ -143,6 +169,8 @@ async function runCommand(cmd: string[], hooks: CommandHooks = {}): Promise<Comm
 
 function getPresetArgs(preset: YoutubePreset): string[] {
   switch (preset) {
+    case "automatic":
+      return [];
     case "best":
       return [
         "-f",
@@ -179,6 +207,20 @@ function getPresetArgs(preset: YoutubePreset): string[] {
   }
 }
 
+function getPresetPostprocessArgs(preset: YoutubePreset): string[] {
+  switch (preset) {
+    case "automatic":
+    case "best":
+    case "fast-1080":
+    case "fast-720":
+      return ["--merge-output-format", "mp4"];
+    case "best-audio":
+      return ["-x", "--audio-format", "mp3"];
+    case "mid-audio":
+      return ["-x", "--audio-format", "mp3", "--audio-quality", "7"];
+  }
+}
+
 function parseMetadata(stdout: string): YoutubeMetadata {
   const lines = stdout
     .split("\n")
@@ -200,13 +242,11 @@ function parseMetadata(stdout: string): YoutubeMetadata {
 async function fetchMetadata(
   runCommandImpl: YoutubeHandlerDeps["runCommand"],
   url: string,
-  preset: YoutubePreset,
 ): Promise<YoutubeMetadata> {
   const { exitCode, stdout, stderr } = await runCommandImpl([
     YT_DLP_BINARY,
     "--no-playlist",
     "--dump-single-json",
-    ...getPresetArgs(preset),
     url,
   ]);
 
@@ -215,6 +255,224 @@ async function fetchMetadata(
   }
 
   return parseMetadata(stdout);
+}
+
+function estimateFormatSizeBytes(
+  format: YoutubeFormat,
+  durationSeconds: number | undefined,
+): number | undefined {
+  if (typeof format.filesize === "number") {
+    return format.filesize;
+  }
+  if (typeof format.filesize_approx === "number") {
+    return format.filesize_approx;
+  }
+  if (!durationSeconds || durationSeconds <= 0) {
+    return undefined;
+  }
+
+  const bitrateKbps =
+    typeof format.tbr === "number"
+      ? format.tbr
+      : typeof format.vbr === "number" || typeof format.abr === "number"
+        ? (format.vbr || 0) + (format.abr || 0)
+        : undefined;
+  if (!bitrateKbps || bitrateKbps <= 0) {
+    return undefined;
+  }
+
+  return (bitrateKbps * 1000 * durationSeconds) / 8;
+}
+
+function formatHasVideo(format: YoutubeFormat): boolean {
+  return !!format.vcodec && format.vcodec !== "none";
+}
+
+function formatHasAudio(format: YoutubeFormat): boolean {
+  return !!format.acodec && format.acodec !== "none";
+}
+
+function formatCompatibilityScore(format: YoutubeFormat): number {
+  let score = 0;
+  if (format.ext === "mp4") {
+    score += 10_000;
+  }
+  if (format.protocol === "https" || format.protocol === "http") {
+    score += 2_000;
+  }
+  return score;
+}
+
+function chooseAutomaticPlan(
+  metadata: YoutubeMetadata,
+  maxFileSize?: number,
+): DownloadPlan {
+  const formats = metadata.formats || [];
+  const duration = metadata.duration;
+
+  const progressiveCandidates = formats
+    .filter((format) => formatHasVideo(format) && formatHasAudio(format))
+    .filter((format) => !!format.format_id)
+    .map((format) => {
+      const estimatedSizeBytes = estimateFormatSizeBytes(format, duration);
+      return {
+        kind: "video" as const,
+        formatArgs: ["-f", format.format_id!],
+        postprocessArgs: ["--merge-output-format", "mp4"],
+        estimatedSizeBytes,
+        description: `automatic progressive format ${format.format_id}`,
+        verboseDetails: `automatic: ${format.height || "?"}p ${format.ext || "?"} progressive (${format.format_id})`,
+        score:
+          (format.height || 0) * 1_000_000 +
+          (format.width || 0) * 1_000 +
+          (format.fps || 0) * 100 +
+          (format.tbr || 0) +
+          formatCompatibilityScore(format),
+      };
+    });
+
+  const audioFormats = formats
+    .filter((format) => !formatHasVideo(format) && formatHasAudio(format))
+    .filter((format) => !!format.format_id);
+
+  const videoOnlyFormats = formats
+    .filter((format) => formatHasVideo(format) && !formatHasAudio(format))
+    .filter((format) => !!format.format_id);
+
+  const mergedCandidates = videoOnlyFormats.flatMap((videoFormat) => {
+    const bestAudio = [...audioFormats]
+      .sort((a, b) => {
+        const aScore = (a.abr || 0) + (a.tbr || 0) + formatCompatibilityScore(a);
+        const bScore = (b.abr || 0) + (b.tbr || 0) + formatCompatibilityScore(b);
+        return bScore - aScore;
+      })
+      .find((audioFormat) => {
+        const videoSize = estimateFormatSizeBytes(videoFormat, duration);
+        const audioSize = estimateFormatSizeBytes(audioFormat, duration);
+        const estimatedSizeBytes =
+          videoSize !== undefined && audioSize !== undefined
+            ? videoSize + audioSize
+            : undefined;
+        return maxFileSize === undefined ||
+          estimatedSizeBytes === undefined ||
+          estimatedSizeBytes <= maxFileSize;
+      });
+
+    if (!bestAudio) {
+      return [];
+    }
+
+    const videoSize = estimateFormatSizeBytes(videoFormat, duration);
+    const audioSize = estimateFormatSizeBytes(bestAudio, duration);
+    const estimatedSizeBytes =
+      videoSize !== undefined && audioSize !== undefined
+        ? videoSize + audioSize
+        : undefined;
+
+    return [
+      {
+        kind: "video" as const,
+        formatArgs: ["-f", `${videoFormat.format_id!}+${bestAudio.format_id!}`],
+        postprocessArgs: ["--merge-output-format", "mp4"],
+        estimatedSizeBytes,
+        description: `automatic merged formats ${videoFormat.format_id}+${bestAudio.format_id}`,
+        verboseDetails:
+          `automatic: ${videoFormat.height || "?"}p ${videoFormat.ext || "video"} + ` +
+          `${bestAudio.ext || "audio"} (${videoFormat.format_id}+${bestAudio.format_id})`,
+        score:
+          (videoFormat.height || 0) * 1_000_000 +
+          (videoFormat.width || 0) * 1_000 +
+          (videoFormat.fps || 0) * 100 +
+          (videoFormat.tbr || 0) +
+          formatCompatibilityScore(videoFormat) +
+          formatCompatibilityScore(bestAudio),
+      },
+    ];
+  });
+
+  const videoCandidates = [...progressiveCandidates, ...mergedCandidates]
+    .filter(
+      (candidate) =>
+        maxFileSize === undefined ||
+        candidate.estimatedSizeBytes === undefined ||
+        candidate.estimatedSizeBytes <= maxFileSize,
+    )
+    .sort((a, b) => b.score - a.score);
+
+  const bestVideo = videoCandidates[0];
+  if (bestVideo) {
+    return {
+      kind: "video",
+      formatArgs: bestVideo.formatArgs,
+      postprocessArgs: bestVideo.postprocessArgs,
+      estimatedSizeBytes: bestVideo.estimatedSizeBytes,
+      description: bestVideo.description,
+      verboseDetails: bestVideo.verboseDetails,
+    };
+  }
+
+  const audioCandidates = audioFormats
+    .map((format) => ({
+      kind: "audio" as const,
+      formatArgs: ["-f", format.format_id!],
+      postprocessArgs: ["-x", "--audio-format", "mp3"],
+      estimatedSizeBytes: estimateFormatSizeBytes(format, duration),
+      description: `automatic audio format ${format.format_id}`,
+      verboseDetails: `automatic: audio ${format.abr || format.tbr || "?"}kbps (${format.format_id})`,
+      score: (format.abr || 0) * 1_000 + (format.tbr || 0) + formatCompatibilityScore(format),
+    }))
+    .filter(
+      (candidate) =>
+        maxFileSize === undefined ||
+        candidate.estimatedSizeBytes === undefined ||
+        candidate.estimatedSizeBytes <= maxFileSize,
+    )
+    .sort((a, b) => b.score - a.score);
+
+  const bestAudio = audioCandidates[0];
+  if (bestAudio) {
+    return {
+      kind: "audio",
+      formatArgs: bestAudio.formatArgs,
+      postprocessArgs: bestAudio.postprocessArgs,
+      estimatedSizeBytes: bestAudio.estimatedSizeBytes,
+      description: bestAudio.description,
+      verboseDetails: bestAudio.verboseDetails,
+    };
+  }
+
+  throw new DownloadError(
+    buildOversizeMessage({
+      estimatedSizeBytes:
+        typeof duration === "number"
+          ? estimateVideoSizeFromDuration(duration)
+          : undefined,
+      exact: false,
+    }),
+  );
+}
+
+function buildDownloadPlan(
+  preset: YoutubePreset,
+  metadata: YoutubeMetadata,
+  maxFileSize?: number,
+): DownloadPlan {
+  if (preset === "automatic") {
+    return chooseAutomaticPlan(metadata, maxFileSize);
+  }
+
+  return {
+    kind: preset === "best-audio" || preset === "mid-audio" ? "audio" : "video",
+    formatArgs: getPresetArgs(preset),
+    postprocessArgs: getPresetPostprocessArgs(preset),
+    estimatedSizeBytes:
+      typeof metadata.filesize === "number"
+        ? metadata.filesize
+        : typeof metadata.filesize_approx === "number"
+          ? metadata.filesize_approx
+          : undefined,
+    description: `preset ${preset}`,
+  };
 }
 
 function parseProgressLine(line: string): DownloadProgress | null {
@@ -266,9 +524,9 @@ async function emitProgressFromLine(
 function resolveFinalPath(
   tempDir: string,
   basename: string,
-  preset: YoutubePreset,
+  kind: DownloadPlan["kind"],
 ): string {
-  if (preset === "best-audio" || preset === "mid-audio") {
+  if (kind === "audio") {
     const expectedPath = path.join(tempDir, `${basename}.mp3`);
     if (existsSync(expectedPath)) {
       logger.debug(`resolved yt-dlp audio output path: ${expectedPath}`);
@@ -330,18 +588,14 @@ export class YoutubePlatformHandler implements PlatformHandler {
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
-    const metadata = await fetchMetadata(this.deps.runCommand, url, preset);
-    const estimatedSize =
-      typeof metadata.filesize === "number"
-        ? metadata.filesize
-        : typeof metadata.filesize_approx === "number"
-          ? metadata.filesize_approx
-          : undefined;
+    const metadata = await fetchMetadata(this.deps.runCommand, url);
+    const plan = buildDownloadPlan(preset, metadata, options?.maxFileSize);
+    const estimatedSize = plan.estimatedSizeBytes;
     if (
       options?.maxFileSize !== undefined &&
       ((estimatedSize !== undefined && estimatedSize > options.maxFileSize) ||
         (estimatedSize === undefined &&
-          (preset === "best" || preset === "fast-1080" || preset === "fast-720") &&
+          plan.kind === "video" &&
           isLikelyOversizeVideo(metadata.duration, options.maxFileSize)))
     ) {
       throw new DownloadError(
@@ -359,6 +613,8 @@ export class YoutubePlatformHandler implements PlatformHandler {
     logger.debug(
       preset === "best"
         ? "youtube best preset using mp4-first fast path with merge/remux only"
+        : preset === "automatic"
+          ? `youtube automatic preset selected ${plan.description}`
         : preset === "fast-1080"
           ? "youtube fast-1080 preset using capped 1080p mp4-first selection"
           : preset === "fast-720"
@@ -378,7 +634,8 @@ export class YoutubePlatformHandler implements PlatformHandler {
       "--newline",
       "--output",
       outputTemplate,
-      ...getPresetArgs(preset),
+      ...plan.formatArgs,
+      ...plan.postprocessArgs,
       url,
     ], {
       onStdoutLine: async (line) => {
@@ -400,7 +657,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
       ...parseMetadata(stdout),
     };
     logger.debug(`yt-dlp metadata: ${JSON.stringify(runtimeMetadata)}`);
-    const finalPath = resolveFinalPath(tempDir, basename, preset);
+    const finalPath = resolveFinalPath(tempDir, basename, plan.kind);
     logger.debug(
       `youtube final container: ${path.extname(finalPath).replace(/^\./, "") || "unknown"}`,
     );
@@ -415,7 +672,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
       }
     };
 
-    if (preset === "best-audio" || preset === "mid-audio") {
+    if (plan.kind === "audio") {
       logger.debug(`youtube audio ready at ${finalPath}`);
       return {
         res: {
@@ -428,6 +685,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
               size: Bun.file(finalPath).size,
               payload: {
                 name: runtimeMetadata.title,
+                details: plan.verboseDetails,
               },
               cleanup,
             },
@@ -455,7 +713,10 @@ export class YoutubePlatformHandler implements PlatformHandler {
             downloadUrl: runtimeMetadata.webpage_url || url,
             path: finalPath,
             size: Bun.file(finalPath).size,
-            payload: { resolution },
+            payload: {
+              resolution,
+              details: plan.verboseDetails,
+            },
             cleanup,
           },
         ],

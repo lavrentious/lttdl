@@ -91,6 +91,7 @@ export function generateVideoLinksEntry(
   if (variant.downloaded) {
     return (
       `<a href="${variant.downloadUrl}">${variant.payload.resolution.width}x${variant.payload.resolution.height}</a> - ${fileSizeToHumanReadable(variant.size)}` +
+      (variant.payload.details ? ` - <i>${variant.payload.details}</i>` : "") +
       (best?.downloaded && variant.path === best.path
         ? " ← <i>this version</i>"
         : "")
@@ -127,6 +128,7 @@ export function generateMusicLinksEntry(
   if (variant.downloaded) {
     return (
       `<a href="${variant.downloadUrl}">${fileSizeToHumanReadable(variant.size)}</a>` +
+      (variant.payload.details ? ` - <i>${variant.payload.details}</i>` : "") +
       (best?.downloaded && variant.path === best.path
         ? " ← <i>this version</i>"
         : "")

@@ -12,6 +12,172 @@ function createTempDir(): string {
 }
 
 describe("YoutubePlatformHandler", () => {
+  test("downloads automatic preset as the best fitting video", async () => {
+    const tempDir = createTempDir();
+    let selectedFormatArg = "";
+    const handler = new YoutubePlatformHandler({
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Automatic video",
+              webpage_url: "https://youtu.be/automatic-video",
+              duration: 100,
+              formats: [
+                {
+                  format_id: "18",
+                  ext: "mp4",
+                  width: 640,
+                  height: 360,
+                  fps: 30,
+                  tbr: 600,
+                  vcodec: "avc1",
+                  acodec: "mp4a",
+                  filesize: 10 * 1024 * 1024,
+                },
+                {
+                  format_id: "22",
+                  ext: "mp4",
+                  width: 1280,
+                  height: 720,
+                  fps: 30,
+                  tbr: 1500,
+                  vcodec: "avc1",
+                  acodec: "mp4a",
+                  filesize: 20 * 1024 * 1024,
+                },
+                {
+                  format_id: "137",
+                  ext: "mp4",
+                  width: 1920,
+                  height: 1080,
+                  fps: 30,
+                  tbr: 4000,
+                  vcodec: "avc1",
+                  acodec: "none",
+                  filesize: 80 * 1024 * 1024,
+                },
+                {
+                  format_id: "140",
+                  ext: "m4a",
+                  abr: 128,
+                  tbr: 128,
+                  vcodec: "none",
+                  acodec: "mp4a",
+                  filesize: 3 * 1024 * 1024,
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+
+        const formatIndex = cmd.indexOf("-f");
+        selectedFormatArg = cmd[formatIndex + 1]!;
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        const finalPath = outputTemplate.replace("%(ext)s", "mp4");
+        await Bun.write(finalPath, "video");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            title: "Automatic video",
+            width: 1280,
+            height: 720,
+            webpage_url: "https://youtu.be/automatic-video",
+          }),
+          stderr: "",
+        };
+      },
+      getVideoResolution: async () => ({ width: 1280, height: 720 }),
+    });
+
+    const result = await handler.download!(
+      "https://youtu.be/automatic-video",
+      { youtubePreset: "automatic" },
+      { tempDir, maxFileSize: 50 * 1024 * 1024 },
+    );
+
+    expect(selectedFormatArg).toBe("22");
+    expect(result.res.contentType).toBe("video");
+    result.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("downloads automatic preset as audio when no video fits", async () => {
+    const tempDir = createTempDir();
+    let selectedFormatArg = "";
+    const handler = new YoutubePlatformHandler({
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Automatic audio",
+              webpage_url: "https://youtu.be/automatic-audio",
+              duration: 100,
+              formats: [
+                {
+                  format_id: "22",
+                  ext: "mp4",
+                  width: 1280,
+                  height: 720,
+                  fps: 30,
+                  tbr: 1500,
+                  vcodec: "avc1",
+                  acodec: "mp4a",
+                  filesize: 20 * 1024 * 1024,
+                },
+                {
+                  format_id: "140",
+                  ext: "m4a",
+                  abr: 128,
+                  tbr: 128,
+                  vcodec: "none",
+                  acodec: "mp4a",
+                  filesize: 3 * 1024 * 1024,
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+
+        const formatIndex = cmd.indexOf("-f");
+        selectedFormatArg = cmd[formatIndex + 1]!;
+        expect(cmd).toContain("-x");
+        expect(cmd).toContain("--audio-format");
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+        await Bun.write(finalPath, "audio");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            title: "Automatic audio",
+            webpage_url: "https://youtu.be/automatic-audio",
+          }),
+          stderr: "",
+        };
+      },
+      getVideoResolution: async () => ({ width: 1, height: 1 }),
+    });
+
+    const result = await handler.download!(
+      "https://youtu.be/automatic-audio",
+      { youtubePreset: "automatic" },
+      { tempDir, maxFileSize: 5 * 1024 * 1024 },
+    );
+
+    expect(selectedFormatArg).toBe("140");
+    expect(result.res.contentType).toBe("music");
+    result.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
   test("downloads fast-1080 preset as video", async () => {
     const tempDir = createTempDir();
     const handler = new YoutubePlatformHandler({

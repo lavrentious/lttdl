@@ -1,5 +1,6 @@
 export type Platform = "tiktok" | "youtube" | "pinterest";
 export type YoutubePreset =
+  | "automatic"
   | "best"
   | "fast-1080"
   | "fast-720"
@@ -50,6 +51,7 @@ export type ContentVariant<T> = {
 
 export type VideoVariant = ContentVariant<{
   resolution: { width: number; height: number };
+  details?: string;
 }>;
 
 export type PhotoVariant = ContentVariant<{
@@ -58,6 +60,7 @@ export type PhotoVariant = ContentVariant<{
 
 export type MusicVariant = ContentVariant<{
   name?: string;
+  details?: string;
 }>;
 
 export type GalleryEntry =
