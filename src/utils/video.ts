@@ -78,6 +78,52 @@ export async function getVideoResolution(path: string) {
   return { width: +stream.width, height: +stream.height };
 }
 
+export async function getVideoMetadata(path: string): Promise<{
+  width: number;
+  height: number;
+  durationSeconds?: number;
+}> {
+  const output = await withTimeout(
+    $`ffprobe -v error -select_streams v:0 -show_entries stream=width,height,duration -show_entries format=duration -of json ${path}`.text(),
+    FFPROBE_TIMEOUT_MS,
+    "ffprobe",
+  );
+  const info = JSON.parse(output);
+  const stream = info.streams?.[0];
+  const durationValue = stream?.duration ?? info.format?.duration;
+  const durationSeconds =
+    typeof durationValue === "string" || typeof durationValue === "number"
+      ? Math.max(Math.round(Number(durationValue)), 0)
+      : undefined;
+
+  return {
+    width: +stream.width,
+    height: +stream.height,
+    durationSeconds:
+      durationSeconds !== undefined && Number.isFinite(durationSeconds)
+        ? durationSeconds
+        : undefined,
+  };
+}
+
+export async function getAudioDuration(path: string): Promise<number | undefined> {
+  const output = await withTimeout(
+    $`ffprobe -v error -show_entries format=duration -of json ${path}`.text(),
+    FFPROBE_TIMEOUT_MS,
+    "ffprobe",
+  );
+  const info = JSON.parse(output);
+  const durationValue = info.format?.duration;
+  const durationSeconds =
+    typeof durationValue === "string" || typeof durationValue === "number"
+      ? Math.max(Math.round(Number(durationValue)), 0)
+      : undefined;
+
+  return durationSeconds !== undefined && Number.isFinite(durationSeconds)
+    ? durationSeconds
+    : undefined;
+}
+
 async function runFfmpeg(args: string[], label: string): Promise<void> {
   const ffmpegPath = Bun.which("ffmpeg");
   if (!ffmpegPath) {

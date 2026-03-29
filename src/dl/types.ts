@@ -52,6 +52,7 @@ export type ContentVariant<T> = {
 export type VideoVariant = ContentVariant<{
   resolution: { width: number; height: number };
   details?: string;
+  durationSeconds?: number;
 }>;
 
 export type PhotoVariant = ContentVariant<{
@@ -61,6 +62,7 @@ export type PhotoVariant = ContentVariant<{
 export type MusicVariant = ContentVariant<{
   name?: string;
   details?: string;
+  durationSeconds?: number;
 }>;
 
 export type GalleryEntry =

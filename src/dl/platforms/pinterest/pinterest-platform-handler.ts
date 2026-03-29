@@ -4,8 +4,8 @@ import path from "path";
 import { DownloadError } from "src/errors/download-error";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
-import { getVideoResolution } from "src/utils/video";
 import { isLikelyOversizeVideo } from "src/dl/size-guard";
+import { getVideoMetadata } from "src/utils/video";
 import { AssetDownloader } from "../../asset-downloader";
 import { AssetProcessor } from "../../asset-processor";
 import type { PlatformHandler } from "../../platform-handler";
@@ -303,7 +303,14 @@ async function downloadVideoItem(
   }
 
   const streamResolution = item.media_stream?.video?.resolution;
+  const localMetadata = await getVideoMetadata(outputPath).catch(() => undefined);
   const resolution =
+    localMetadata
+      ? {
+          width: localMetadata.width,
+          height: localMetadata.height,
+        }
+      :
     streamResolution &&
     streamResolution[0] &&
     streamResolution[1] &&
@@ -313,14 +320,17 @@ async function downloadVideoItem(
           width: streamResolution[0],
           height: streamResolution[1],
         }
-      : await getVideoResolution(outputPath);
+      : { width: 0, height: 0 };
 
   return {
     downloaded: true,
     downloadUrl: item.origin,
     path: outputPath,
     size: Bun.file(outputPath).size,
-    payload: { resolution },
+    payload: {
+      resolution,
+      durationSeconds: localMetadata?.durationSeconds ?? durationSeconds,
+    },
     cleanup: () => {
       if (existsSync(outputPath)) {
         rmSync(outputPath);

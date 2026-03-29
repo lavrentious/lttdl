@@ -301,7 +301,13 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         links,
         verboseOutput: userSettings.verboseOutput,
         cleanup,
-        sendMedia: (variant) => ctx.replyWithVideo(new InputFile(variant.path)),
+        sendMedia: (variant) =>
+          ctx.replyWithVideo(new InputFile(variant.path), {
+            width: variant.payload.resolution.width,
+            height: variant.payload.resolution.height,
+            duration: variant.payload.durationSeconds,
+            supports_streaming: true,
+          }),
       });
 
       logger.info(`sent video ${query} to ${ctx.from?.id ?? "unknown user"}`);
@@ -370,7 +376,10 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         verboseOutput: userSettings.verboseOutput,
         cleanup,
         sendMedia: (variant) =>
-          ctx.replyWithAudio(new InputFile(variant.path, variant.payload.name)),
+          ctx.replyWithAudio(new InputFile(variant.path, variant.payload.name), {
+            duration: variant.payload.durationSeconds,
+            title: variant.payload.name,
+          }),
       });
 
       logger.info(`sent audio ${query} to ${ctx.from?.id ?? "unknown user"}`);

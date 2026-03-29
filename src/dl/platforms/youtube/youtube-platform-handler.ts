@@ -9,7 +9,7 @@ import {
 } from "src/dl/size-guard";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
-import { getVideoResolution } from "src/utils/video";
+import { getAudioDuration, getVideoMetadata, getVideoResolution } from "src/utils/video";
 import type { PlatformHandler, ResolveContext } from "../../platform-handler";
 import type {
   DownloadExecutionResult,
@@ -686,6 +686,11 @@ export class YoutubePlatformHandler implements PlatformHandler {
               payload: {
                 name: runtimeMetadata.title,
                 details: plan.verboseDetails,
+                durationSeconds:
+                  (typeof runtimeMetadata.duration === "number"
+                    ? Math.round(runtimeMetadata.duration)
+                    : undefined) ??
+                  (await getAudioDuration(finalPath).catch(() => undefined)),
               },
               cleanup,
             },
@@ -700,6 +705,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
       typeof runtimeMetadata.height === "number"
         ? { width: runtimeMetadata.width, height: runtimeMetadata.height }
         : await this.deps.getVideoResolution(finalPath);
+    const localVideoMetadata = await getVideoMetadata(finalPath).catch(() => undefined);
     logger.debug(
       `youtube video ready at ${finalPath} with resolution ${resolution.width}x${resolution.height}`,
     );
@@ -714,8 +720,18 @@ export class YoutubePlatformHandler implements PlatformHandler {
             path: finalPath,
             size: Bun.file(finalPath).size,
             payload: {
-              resolution,
+              resolution: localVideoMetadata
+                ? {
+                    width: localVideoMetadata.width,
+                    height: localVideoMetadata.height,
+                  }
+                : resolution,
               details: plan.verboseDetails,
+              durationSeconds:
+                localVideoMetadata?.durationSeconds ??
+                (typeof runtimeMetadata.duration === "number"
+                  ? Math.round(runtimeMetadata.duration)
+                  : undefined),
             },
             cleanup,
           },

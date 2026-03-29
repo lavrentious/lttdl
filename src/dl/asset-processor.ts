@@ -1,7 +1,11 @@
 import { randomUUIDv7 } from "bun";
 import { getImageResolution, recodeImageToJpeg } from "src/utils/image";
 import { logger } from "src/utils/logger";
-import { ensureMp4Video, getVideoResolution } from "src/utils/video";
+import {
+  ensureMp4Video,
+  getAudioDuration,
+  getVideoMetadata,
+} from "src/utils/video";
 import { AssetDownloader } from "./asset-downloader";
 import { isLikelyOversizeVideo } from "./size-guard";
 import type {
@@ -63,10 +67,13 @@ export class AssetProcessor {
       await ensureMp4Video(downloadedPath, finalPath);
       const sourcePath = downloadedPath;
       const mp4Path = finalPath;
-      const resolution = await getVideoResolution(mp4Path);
+      const metadata = await getVideoMetadata(mp4Path);
 
       return {
-        payload: { resolution },
+        payload: {
+          resolution: { width: metadata.width, height: metadata.height },
+          durationSeconds: metadata.durationSeconds,
+        },
         downloaded: true,
         downloadUrl: variant.url,
         path: mp4Path,
@@ -162,12 +169,17 @@ export class AssetProcessor {
       path = await this.downloader.downloadFile(variant.url, tempDir, undefined, onProgress);
       const downloadedPath = path;
 
+      const durationSeconds = await getAudioDuration(downloadedPath).catch(() => undefined);
+
       return {
         downloaded: true,
         downloadUrl: variant.url,
         path: downloadedPath,
         size: Bun.file(downloadedPath).size,
-        payload: { name: variant.name || contentName || undefined },
+        payload: {
+          name: variant.name || contentName || undefined,
+          durationSeconds,
+        },
         cleanup: () => {
           Bun.file(downloadedPath).delete().catch();
         },
