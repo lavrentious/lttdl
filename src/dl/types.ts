@@ -83,10 +83,27 @@ export type DownloadResult =
 
 export type DownloadStrategy = "all" | "single";
 
+export type DownloadProgress =
+  | {
+      stage: "download";
+      percent: number;
+      speed?: string;
+      eta?: string;
+    }
+  | {
+      stage: "postprocess";
+      message: string;
+    }
+  | {
+      stage: "completed";
+      message: string;
+    };
+
 export type DownloadOptions = {
   tempDir?: string;
   strategy?: DownloadStrategy;
   maxFileSize?: number;
+  onProgress?: (progress: DownloadProgress) => void | Promise<void>;
 };
 
 export type DownloadExecutionResult = {

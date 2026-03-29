@@ -9,6 +9,7 @@ import type { PlatformHandler, ResolveContext } from "../../platform-handler";
 import type {
   DownloadExecutionResult,
   DownloadOptions,
+  DownloadProgress,
   YoutubePreset,
 } from "../../types";
 
@@ -25,15 +26,68 @@ type CommandResult = {
   stderr: string;
 };
 
+type CommandHooks = {
+  onStdoutLine?: (line: string) => void | Promise<void>;
+  onStderrLine?: (line: string) => void | Promise<void>;
+};
+
 type YoutubeHandlerDeps = {
   which: (binary: string) => string | null;
-  runCommand: (cmd: string[]) => Promise<CommandResult>;
+  runCommand: (cmd: string[], hooks?: CommandHooks) => Promise<CommandResult>;
   getVideoResolution: (filePath: string) => Promise<{ width: number; height: number }>;
 };
 
 const YT_DLP_BINARY = "yt-dlp";
 
-async function runCommand(cmd: string[]): Promise<CommandResult> {
+async function readStream(
+  stream: ReadableStream<Uint8Array> | null | undefined,
+  onLine?: (line: string) => void | Promise<void>,
+): Promise<string> {
+  if (!stream) {
+    return "";
+  }
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let output = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    const chunk = decoder.decode(value, { stream: true });
+    output += chunk;
+    buffer += chunk;
+
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex >= 0) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (line) {
+        await onLine?.(line);
+      }
+      newlineIndex = buffer.indexOf("\n");
+    }
+  }
+
+  const tail = decoder.decode();
+  if (tail) {
+    output += tail;
+    buffer += tail;
+  }
+
+  const finalLine = buffer.trim();
+  if (finalLine) {
+    await onLine?.(finalLine);
+  }
+
+  return output;
+}
+
+async function runCommand(cmd: string[], hooks: CommandHooks = {}): Promise<CommandResult> {
   logger.debug(`running yt-dlp command: ${cmd.join(" ")}`);
   const process = Bun.spawn({
     cmd,
@@ -43,8 +97,8 @@ async function runCommand(cmd: string[]): Promise<CommandResult> {
 
   const [exitCode, stdout, stderr] = await Promise.all([
     process.exited,
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
+    readStream(process.stdout, hooks.onStdoutLine),
+    readStream(process.stderr, hooks.onStderrLine),
   ]);
 
   return {
@@ -84,6 +138,47 @@ function parseMetadata(stdout: string): YoutubeMetadata {
   } catch {
     return {};
   }
+}
+
+function parseProgressLine(line: string): DownloadProgress | null {
+  const percentMatch = line.match(
+    /^\[download\]\s+(\d+(?:\.\d+)?)% of .*?(?: at\s+(.+?)\s+ETA\s+(.+))?$/,
+  );
+  if (percentMatch) {
+    return {
+      stage: "download",
+      percent: Number(percentMatch[1]),
+      speed: percentMatch[2]?.trim(),
+      eta: percentMatch[3]?.trim(),
+    };
+  }
+
+  if (
+    line.startsWith("[Merger]") ||
+    line.startsWith("[VideoRemuxer]") ||
+    line.startsWith("[ExtractAudio]") ||
+    line.startsWith("[Fixup")
+  ) {
+    return {
+      stage: "postprocess",
+      message: line.replace(/^\[[^\]]+\]\s*/, ""),
+    };
+  }
+
+  return null;
+}
+
+async function emitProgressFromLine(
+  line: string,
+  onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+) {
+  const progress = parseProgressLine(line);
+  if (!progress) {
+    return;
+  }
+
+  logger.debug(`yt-dlp progress: ${JSON.stringify(progress)}`);
+  await onProgress?.(progress);
 }
 
 function resolveFinalPath(
@@ -165,12 +260,20 @@ export class YoutubePlatformHandler implements PlatformHandler {
       YT_DLP_BINARY,
       "--no-playlist",
       "--print-json",
-      "--no-progress",
+      "--progress",
+      "--newline",
       "--output",
       outputTemplate,
       ...getPresetArgs(preset),
       url,
-    ]);
+    ], {
+      onStdoutLine: async (line) => {
+        await emitProgressFromLine(line, options?.onProgress);
+      },
+      onStderrLine: async (line) => {
+        await emitProgressFromLine(line, options?.onProgress);
+      },
+    });
     logger.debug(`yt-dlp exited with code ${exitCode}`);
 
     if (exitCode !== 0) {
@@ -184,6 +287,10 @@ export class YoutubePlatformHandler implements PlatformHandler {
     logger.debug(
       `youtube final container: ${path.extname(finalPath).replace(/^\./, "") || "unknown"}`,
     );
+    await options?.onProgress?.({
+      stage: "completed",
+      message: "download complete",
+    });
     const cleanup = () => {
       if (existsSync(finalPath)) {
         logger.debug(`cleaning up youtube download at ${finalPath}`);

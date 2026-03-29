@@ -27,10 +27,12 @@ import {
 import { chunkArray } from "src/utils/array";
 import { logError, logger } from "src/utils/logger";
 import { isHttpURL } from "src/utils/utils";
+import type { DownloadProgress } from "src/dl/types";
 
 const MAX_FILE_SIZE_MB = 50;
 const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 const MAX_MEDIA_GROUP_SIZE = 10;
+const PROGRESS_UPDATE_INTERVAL_MS = 1200;
 
 function deleteMessageSafe(
   ctx: Filter<Context, "message">,
@@ -38,6 +40,75 @@ function deleteMessageSafe(
 ) {
   if (!message) return;
   ctx.api.deleteMessage(message.chat.id, message.message_id).catch();
+}
+
+function formatProgressBar(percent: number): string {
+  const clamped = Math.max(0, Math.min(100, percent));
+  const segments = 10;
+  let remainder = (clamped / 100) * segments;
+  let bar = "";
+
+  for (let i = 0; i < segments; i++) {
+    if (remainder >= 1) {
+      bar += "█";
+    } else if (remainder >= 0.75) {
+      bar += "▓";
+    } else if (remainder >= 0.5) {
+      bar += "▒";
+    } else if (remainder > 0) {
+      bar += "░";
+    } else {
+      bar += "░";
+    }
+
+    remainder -= 1;
+  }
+
+  return bar;
+}
+
+function createYoutubeProgressUpdater(
+  ctx: Filter<Context, "message">,
+  loadingMessage: { chat: { id: number }; message_id: number },
+) {
+  let lastSentAt = 0;
+  let lastText = "downloading...";
+
+  return async (progress: DownloadProgress) => {
+    let nextText: string;
+    if (progress.stage === "download") {
+      const percent = Number.isFinite(progress.percent)
+        ? Math.max(0, Math.min(100, progress.percent))
+        : 0;
+      nextText =
+        `downloading youtube...\n` +
+        `\`${formatProgressBar(percent)}\` ${percent.toFixed(1)}%` +
+        (progress.speed ? `\nspeed: ${progress.speed}` : "") +
+        (progress.eta ? `\neta: ${progress.eta}` : "");
+    } else if (progress.stage === "postprocess") {
+      nextText = `processing youtube...\n${progress.message}`;
+    } else {
+      nextText = `youtube download complete`;
+    }
+
+    const now = Date.now();
+    if (
+      nextText === lastText ||
+      (now - lastSentAt < PROGRESS_UPDATE_INTERVAL_MS &&
+        progress.stage === "download" &&
+        progress.percent < 100)
+    ) {
+      return;
+    }
+
+    lastSentAt = now;
+    lastText = nextText;
+    await ctx.api
+      .editMessageText(loadingMessage.chat.id, loadingMessage.message_id, nextText, {
+        parse_mode: "Markdown",
+      })
+      .catch();
+  };
 }
 
 type GalleryUploadableMedia = {
@@ -164,6 +235,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     ? getUserSettings(ctx.from.id)
     : getDefaultUserSettings();
   const downloadStrategy = userSettings.verboseOutput ? "all" : "single";
+  const youtubeProgressUpdater = createYoutubeProgressUpdater(ctx, msg1);
 
   try {
     const { res, cleanup } = await downloadContent(
@@ -175,6 +247,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       {
         strategy: downloadStrategy,
         maxFileSize: MAX_FILE_SIZE,
+        onProgress: youtubeProgressUpdater,
       },
     );
 

@@ -19,6 +19,7 @@ describe("YoutubePlatformHandler", () => {
       runCommand: async (cmd) => {
         expect(cmd).toContain("bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b");
         expect(cmd).toContain("--merge-output-format");
+        expect(cmd).toContain("--progress");
         expect(cmd).not.toContain("--recode-video");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
@@ -64,6 +65,7 @@ describe("YoutubePlatformHandler", () => {
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
+        expect(cmd).toContain("--progress");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
         const finalPath = outputTemplate.replace("%(ext)s", "webm");
@@ -109,6 +111,7 @@ describe("YoutubePlatformHandler", () => {
       runCommand: async (cmd) => {
         expect(cmd).toContain("--audio-format");
         expect(cmd).toContain("mp3");
+        expect(cmd).toContain("--progress");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
         finalPath = outputTemplate.replace("%(ext)s", "mp3");
@@ -159,5 +162,86 @@ describe("YoutubePlatformHandler", () => {
     await expect(
       handler.download!("https://youtu.be/example", { youtubePreset: "best" }, {}),
     ).rejects.toThrow(new DownloadError("yt-dlp is not installed"));
+  });
+
+  test("emits download and postprocess progress updates", async () => {
+    const tempDir = createTempDir();
+    const progressStages: string[] = [];
+    const handler = new YoutubePlatformHandler({
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd, hooks) => {
+        await hooks?.onStdoutLine?.("[download]  25.0% of 100.00MiB at 5.00MiB/s ETA 00:15");
+        await hooks?.onStdoutLine?.("[VideoRemuxer] Remuxing video from webm to mp4");
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        const finalPath = outputTemplate.replace("%(ext)s", "mp4");
+        await Bun.write(finalPath, "video");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            title: "Progress video",
+            width: 1280,
+            height: 720,
+            webpage_url: "https://youtu.be/progress",
+          }),
+          stderr: "",
+        };
+      },
+      getVideoResolution: async () => ({ width: 1, height: 1 }),
+    });
+
+    await handler.download!(
+      "https://youtu.be/progress",
+      { youtubePreset: "best" },
+      {
+        tempDir,
+        onProgress: (progress) => {
+          progressStages.push(progress.stage);
+        },
+      },
+    );
+
+    expect(progressStages).toEqual(["download", "postprocess", "completed"]);
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("also accepts progress lines from stderr", async () => {
+    const tempDir = createTempDir();
+    const progressStages: string[] = [];
+    const handler = new YoutubePlatformHandler({
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd, hooks) => {
+        await hooks?.onStderrLine?.("[download]  75.0% of 100.00MiB at 5.00MiB/s ETA 00:05");
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        const finalPath = outputTemplate.replace("%(ext)s", "mp4");
+        await Bun.write(finalPath, "video");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            title: "Progress video stderr",
+            width: 1280,
+            height: 720,
+            webpage_url: "https://youtu.be/progress-stderr",
+          }),
+          stderr: "",
+        };
+      },
+      getVideoResolution: async () => ({ width: 1, height: 1 }),
+    });
+
+    await handler.download!(
+      "https://youtu.be/progress-stderr",
+      { youtubePreset: "best" },
+      {
+        tempDir,
+        onProgress: (progress) => {
+          progressStages.push(progress.stage);
+        },
+      },
+    );
+
+    expect(progressStages).toEqual(["download", "completed"]);
+    rmSync(tempDir, { recursive: true, force: true });
   });
 });
