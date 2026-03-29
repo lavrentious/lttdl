@@ -1,7 +1,10 @@
-import { $ } from "bun";
+import { $, spawn } from "bun";
+import { existsSync, rmSync } from "fs";
 import { withTimeout } from "./async";
+import { logger } from "./logger";
 
 const FFPROBE_TIMEOUT_MS = 15000;
+const FFMPEG_TIMEOUT_MS = 10 * 60 * 1000;
 
 function getTypeFromBinaryData(binaryData: Uint8Array) {
   if (
@@ -73,4 +76,89 @@ export async function getVideoResolution(path: string) {
   const info = JSON.parse(output);
   const stream = info.streams?.[0];
   return { width: +stream.width, height: +stream.height };
+}
+
+async function runFfmpeg(args: string[], label: string): Promise<void> {
+  const ffmpegPath = Bun.which("ffmpeg");
+  if (!ffmpegPath) {
+    throw new Error("ffmpeg is not installed");
+  }
+
+  const process = spawn({
+    cmd: [ffmpegPath, ...args],
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  const [exitCode, stderr] = await withTimeout(
+    Promise.all([process.exited, new Response(process.stderr).text()]),
+    FFMPEG_TIMEOUT_MS,
+    label,
+  );
+
+  if (exitCode !== 0) {
+    throw new Error(stderr.trim() || `${label} failed`);
+  }
+}
+
+export async function ensureMp4Video(inputPath: string, outputPath: string): Promise<void> {
+  if (existsSync(outputPath)) {
+    rmSync(outputPath);
+  }
+
+  try {
+    await runFfmpeg(
+      [
+        "-y",
+        "-i",
+        inputPath,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        outputPath,
+      ],
+      "ffmpeg remux",
+    );
+    return;
+  } catch (error) {
+    logger.warn(
+      `failed to remux video to mp4, retrying with re-encode: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    if (existsSync(outputPath)) {
+      rmSync(outputPath);
+    }
+  }
+
+  await runFfmpeg(
+    [
+      "-y",
+      "-i",
+      inputPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a?",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "23",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-movflags",
+      "+faststart",
+      outputPath,
+    ],
+    "ffmpeg re-encode",
+  );
 }

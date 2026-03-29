@@ -1,6 +1,7 @@
+import { randomUUIDv7 } from "bun";
 import { getImageResolution, recodeImageToJpeg } from "src/utils/image";
 import { logger } from "src/utils/logger";
-import { getVideoResolution } from "src/utils/video";
+import { ensureMp4Video, getVideoResolution } from "src/utils/video";
 import { AssetDownloader } from "./asset-downloader";
 import type {
   DownloadProgress,
@@ -20,7 +21,8 @@ export class AssetProcessor {
     onProgress?: (progress: DownloadProgress) => void | Promise<void>,
   ): Promise<VideoVariant> {
     logger.debug(`downloading video from ${variant.url}...`);
-    let path: string | null = null;
+    let downloadedPath: string | null = null;
+    let finalPath: string | null = null;
     try {
       if (maxFileSize !== undefined) {
         const remoteSize = await this.downloader
@@ -37,23 +39,35 @@ export class AssetProcessor {
         }
       }
 
-      path = await this.downloader.downloadFile(variant.url, tempDir, undefined, onProgress);
-      const downloadedPath = path;
-      const resolution = await getVideoResolution(downloadedPath);
+      downloadedPath = await this.downloader.downloadFile(
+        variant.url,
+        tempDir,
+        randomUUIDv7(),
+        onProgress,
+      );
+      finalPath = `${downloadedPath}.mp4`;
+      await ensureMp4Video(downloadedPath, finalPath);
+      const sourcePath = downloadedPath;
+      const mp4Path = finalPath;
+      const resolution = await getVideoResolution(mp4Path);
 
       return {
         payload: { resolution },
         downloaded: true,
         downloadUrl: variant.url,
-        path: downloadedPath,
-        size: Bun.file(downloadedPath).size,
+        path: mp4Path,
+        size: Bun.file(mp4Path).size,
         cleanup: () => {
-          Bun.file(downloadedPath).delete().catch();
+          Bun.file(sourcePath).delete().catch();
+          Bun.file(mp4Path).delete().catch();
         },
       } satisfies VideoVariant;
     } catch {
-      if (path) {
-        Bun.file(path).delete().catch();
+      if (downloadedPath) {
+        Bun.file(downloadedPath).delete().catch();
+      }
+      if (finalPath) {
+        Bun.file(finalPath).delete().catch();
       }
       logger.warn(`failed to download video from ${variant.url}`);
       return {
