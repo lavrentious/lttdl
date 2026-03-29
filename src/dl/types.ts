@@ -1,4 +1,4 @@
-export type Platform = "tiktok" | "youtube" | "pinterest";
+export type Platform = "tiktok" | "youtube" | "pinterest" | "instagram";
 export type YoutubePreset =
   | "automatic"
   | "best"

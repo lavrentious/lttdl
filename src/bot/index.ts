@@ -11,6 +11,7 @@ function startupCheck() {
   const ffprobePath = Bun.which("ffprobe");
   const ytDlpPath = Bun.which("yt-dlp");
   const pinterestDlPath = Bun.which("pinterest-dl");
+  const instaloaderPath = Bun.which("instaloader");
 
   if (!ffprobePath) {
     logger.crit(
@@ -30,6 +31,12 @@ function startupCheck() {
       "pinterest-dl is not installed; pinterest downloads will fail until it is available in PATH.",
     );
   }
+
+  if (!instaloaderPath) {
+    logger.warn(
+      "instaloader is not installed; instagram downloads will fail until it is available in PATH.",
+    );
+  }
 }
 
 function createBot() {
@@ -41,8 +48,8 @@ function createBot() {
   bot.command("start", (ctx) =>
     ctx.reply(
       "hi.\n" +
-        "this is a bot for downloading tiktoks without watermarks, youtube media, and pinterest pins/boards. no ads, no spam, no sponsors.\n" +
-        "send a tiktok, youtube, or pinterest link and get the media.\n" +
+        "this is a bot for downloading tiktoks without watermarks, youtube media, pinterest pins/boards, and instagram posts/reels. no ads, no spam, no sponsors.\n" +
+        "send a tiktok/youtube/pinterest/instagram link and get the media.\n" +
         "use /settings to configure verbose output, tiktok providers, and youtube preset.",
     ),
   );
