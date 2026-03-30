@@ -14,7 +14,7 @@ export const MUSIC_SEARCH_PROVIDER_DESCRIPTIONS: Record<
   string
 > = {
   "youtube-music":
-    "`youtube music` - searches the YouTube Music songs section via `yt-dlp` and downloads the selected track as mp3.",
+    "`youtube music` - searches the YouTube Music songs section via `yt-dlp` and downloads the selected track as mp3 (search may be slower)",
   youtube:
-    "`youtube videos` - searches regular YouTube video results via `yt-dlp` and downloads the selected result as mp3.",
+    "`youtube videos` - searches regular YouTube video results via `yt-dlp` and downloads the selected result as mp3",
 };
