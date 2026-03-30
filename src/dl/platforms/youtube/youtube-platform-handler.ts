@@ -10,6 +10,7 @@ import {
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
 import { getAudioDuration, getVideoMetadata, getVideoResolution } from "src/utils/video";
+import { DEFAULT_YOUTUBE_PRESET } from "./types";
 import type { PlatformHandler, ResolveContext } from "../../platform-handler";
 import type {
   DownloadExecutionResult,
@@ -169,7 +170,8 @@ async function runCommand(cmd: string[], hooks: CommandHooks = {}): Promise<Comm
 
 function getPresetArgs(preset: YoutubePreset): string[] {
   switch (preset) {
-    case "automatic":
+    case "auto-video-audio":
+    case "auto-audio-only":
       return [];
     case "best":
       return [
@@ -209,11 +211,13 @@ function getPresetArgs(preset: YoutubePreset): string[] {
 
 function getPresetPostprocessArgs(preset: YoutubePreset): string[] {
   switch (preset) {
-    case "automatic":
+    case "auto-video-audio":
     case "best":
     case "fast-1080":
     case "fast-720":
       return ["--merge-output-format", "mp4"];
+    case "auto-audio-only":
+      return ["-x", "--audio-format", "mp3"];
     case "best-audio":
       return ["-x", "--audio-format", "mp3"];
     case "mid-audio":
@@ -303,10 +307,10 @@ function formatCompatibilityScore(format: YoutubeFormat): number {
   return score;
 }
 
-function chooseAutomaticPlan(
+function buildAutomaticVideoCandidates(
   metadata: YoutubeMetadata,
   maxFileSize?: number,
-): DownloadPlan {
+): Array<DownloadPlan & { score: number }> {
   const formats = metadata.formats || [];
   const duration = metadata.duration;
 
@@ -320,8 +324,9 @@ function chooseAutomaticPlan(
         formatArgs: ["-f", format.format_id!],
         postprocessArgs: ["--merge-output-format", "mp4"],
         estimatedSizeBytes,
-        description: `automatic progressive format ${format.format_id}`,
-        verboseDetails: `automatic: ${format.height || "?"}p ${format.ext || "?"} progressive (${format.format_id})`,
+        description: `auto video+audio progressive format ${format.format_id}`,
+        verboseDetails:
+          `auto video+audio: ${format.height || "?"}p ${format.ext || "?"} progressive (${format.format_id})`,
         score:
           (format.height || 0) * 1_000_000 +
           (format.width || 0) * 1_000 +
@@ -375,9 +380,9 @@ function chooseAutomaticPlan(
         formatArgs: ["-f", `${videoFormat.format_id!}+${bestAudio.format_id!}`],
         postprocessArgs: ["--merge-output-format", "mp4"],
         estimatedSizeBytes,
-        description: `automatic merged formats ${videoFormat.format_id}+${bestAudio.format_id}`,
+        description: `auto video+audio merged formats ${videoFormat.format_id}+${bestAudio.format_id}`,
         verboseDetails:
-          `automatic: ${videoFormat.height || "?"}p ${videoFormat.ext || "video"} + ` +
+          `auto video+audio: ${videoFormat.height || "?"}p ${videoFormat.ext || "video"} + ` +
           `${bestAudio.ext || "audio"} (${videoFormat.format_id}+${bestAudio.format_id})`,
         score:
           (videoFormat.height || 0) * 1_000_000 +
@@ -400,6 +405,14 @@ function chooseAutomaticPlan(
     .sort((a, b) => b.score - a.score);
 
   const bestVideo = videoCandidates[0];
+  return bestVideo ? [bestVideo] : [];
+}
+
+function chooseAutoVideoAudioPlan(
+  metadata: YoutubeMetadata,
+  maxFileSize?: number,
+): DownloadPlan {
+  const [bestVideo] = buildAutomaticVideoCandidates(metadata, maxFileSize);
   if (bestVideo) {
     return {
       kind: "video",
@@ -411,14 +424,36 @@ function chooseAutomaticPlan(
     };
   }
 
+  throw new DownloadError(
+    buildOversizeMessage({
+      estimatedSizeBytes:
+        typeof metadata.duration === "number"
+          ? estimateVideoSizeFromDuration(metadata.duration)
+          : undefined,
+      exact: false,
+    }),
+  );
+}
+
+function chooseAutoAudioOnlyPlan(
+  metadata: YoutubeMetadata,
+  maxFileSize?: number,
+): DownloadPlan {
+  const formats = metadata.formats || [];
+  const duration = metadata.duration;
+  const audioFormats = formats
+    .filter((format) => !formatHasVideo(format) && formatHasAudio(format))
+    .filter((format) => !!format.format_id);
+
   const audioCandidates = audioFormats
     .map((format) => ({
       kind: "audio" as const,
       formatArgs: ["-f", format.format_id!],
       postprocessArgs: ["-x", "--audio-format", "mp3"],
       estimatedSizeBytes: estimateFormatSizeBytes(format, duration),
-      description: `automatic audio format ${format.format_id}`,
-      verboseDetails: `automatic: audio ${format.abr || format.tbr || "?"}kbps (${format.format_id})`,
+      description: `auto audio only format ${format.format_id}`,
+      verboseDetails:
+        `auto audio only: ${format.abr || format.tbr || "?"}kbps (${format.format_id})`,
       score: (format.abr || 0) * 1_000 + (format.tbr || 0) + formatCompatibilityScore(format),
     }))
     .filter(
@@ -457,8 +492,12 @@ function buildDownloadPlan(
   metadata: YoutubeMetadata,
   maxFileSize?: number,
 ): DownloadPlan {
-  if (preset === "automatic") {
-    return chooseAutomaticPlan(metadata, maxFileSize);
+  if (preset === "auto-video-audio") {
+    return chooseAutoVideoAudioPlan(metadata, maxFileSize);
+  }
+
+  if (preset === "auto-audio-only") {
+    return chooseAutoAudioOnlyPlan(metadata, maxFileSize);
   }
 
   return {
@@ -584,7 +623,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
       throw new DownloadError("yt-dlp is not installed");
     }
 
-    const preset = context?.youtubePreset || "best";
+    const preset = context?.youtubePreset || DEFAULT_YOUTUBE_PRESET;
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
@@ -613,8 +652,10 @@ export class YoutubePlatformHandler implements PlatformHandler {
     logger.debug(
       preset === "best"
         ? "youtube best preset using mp4-first fast path with merge/remux only"
-        : preset === "automatic"
-          ? `youtube automatic preset selected ${plan.description}`
+        : preset === "auto-video-audio"
+          ? `youtube auto-video-audio preset selected ${plan.description}`
+        : preset === "auto-audio-only"
+          ? `youtube auto-audio-only preset selected ${plan.description}`
         : preset === "fast-1080"
           ? "youtube fast-1080 preset using capped 1080p mp4-first selection"
           : preset === "fast-720"

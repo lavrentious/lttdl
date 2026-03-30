@@ -12,7 +12,7 @@ function createTempDir(): string {
 }
 
 describe("YoutubePlatformHandler", () => {
-  test("downloads automatic preset as the best fitting video", async () => {
+  test("downloads auto video+audio preset as the best fitting video", async () => {
     const tempDir = createTempDir();
     let selectedFormatArg = "";
     const handler = new YoutubePlatformHandler({
@@ -96,7 +96,7 @@ describe("YoutubePlatformHandler", () => {
 
     const result = await handler.download!(
       "https://youtu.be/automatic-video",
-      { youtubePreset: "automatic" },
+      { youtubePreset: "auto-video-audio" },
       { tempDir, maxFileSize: 50 * 1024 * 1024 },
     );
 
@@ -106,7 +106,7 @@ describe("YoutubePlatformHandler", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test("downloads automatic preset as audio when no video fits", async () => {
+  test("downloads auto audio only preset as audio", async () => {
     const tempDir = createTempDir();
     let selectedFormatArg = "";
     const handler = new YoutubePlatformHandler({
@@ -168,13 +168,68 @@ describe("YoutubePlatformHandler", () => {
 
     const result = await handler.download!(
       "https://youtu.be/automatic-audio",
-      { youtubePreset: "automatic" },
+      { youtubePreset: "auto-audio-only" },
       { tempDir, maxFileSize: 5 * 1024 * 1024 },
     );
 
     expect(selectedFormatArg).toBe("140");
     expect(result.res.contentType).toBe("music");
     result.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("fails auto video+audio when only audio fits under the limit", async () => {
+    const tempDir = createTempDir();
+    const handler = new YoutubePlatformHandler({
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Auto video too large",
+              webpage_url: "https://youtu.be/auto-video-too-large",
+              duration: 100,
+              formats: [
+                {
+                  format_id: "22",
+                  ext: "mp4",
+                  width: 1280,
+                  height: 720,
+                  fps: 30,
+                  tbr: 1500,
+                  vcodec: "avc1",
+                  acodec: "mp4a",
+                  filesize: 20 * 1024 * 1024,
+                },
+                {
+                  format_id: "140",
+                  ext: "m4a",
+                  abr: 128,
+                  tbr: 128,
+                  vcodec: "none",
+                  acodec: "mp4a",
+                  filesize: 3 * 1024 * 1024,
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+
+        throw new Error("download command should not run when no video fits");
+      },
+      getVideoResolution: async () => ({ width: 1, height: 1 }),
+    });
+
+    await expect(
+      handler.download!(
+        "https://youtu.be/auto-video-too-large",
+        { youtubePreset: "auto-video-audio" },
+        { tempDir, maxFileSize: 5 * 1024 * 1024 },
+      ),
+    ).rejects.toThrow(DownloadError);
+
     rmSync(tempDir, { recursive: true, force: true });
   });
 

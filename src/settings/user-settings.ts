@@ -7,6 +7,7 @@ import {
 } from "src/dl/platforms/tiktok/types";
 import {
   ALL_YOUTUBE_PRESETS,
+  DEFAULT_YOUTUBE_PRESET,
 } from "src/dl/platforms/youtube/types";
 import type { YoutubePreset } from "src/dl/types";
 import { config } from "src/utils/env-validation";
@@ -31,8 +32,6 @@ type UserSettingsRow = {
 };
 
 const DEFAULT_TIKTOK_PROVIDERS: TiktokProvider[] = ["v2"];
-const DEFAULT_YOUTUBE_PRESET: YoutubePreset = "best";
-
 const DEFAULT_USER_SETTINGS: UserSettings = {
   verboseOutput: false,
   platformPreferences: {
@@ -72,6 +71,10 @@ function normalizeTiktokProviders(
 }
 
 function normalizeYoutubePreset(value: string): YoutubePreset {
+  if (value === "automatic") {
+    return DEFAULT_YOUTUBE_PRESET;
+  }
+
   return ALL_YOUTUBE_PRESETS.includes(value as YoutubePreset)
     ? (value as YoutubePreset)
     : DEFAULT_YOUTUBE_PRESET;
@@ -120,7 +123,7 @@ function ensureUserSettingsColumns(database: Database) {
 
   try {
     database.exec(`
-      ALTER TABLE user_settings ADD COLUMN youtube_preset TEXT NOT NULL DEFAULT 'best';
+      ALTER TABLE user_settings ADD COLUMN youtube_preset TEXT NOT NULL DEFAULT 'auto-video-audio';
     `);
   } catch {}
 }
@@ -165,7 +168,7 @@ export function initUserSettingsDb() {
       user_id INTEGER PRIMARY KEY,
       verbose_output INTEGER NOT NULL DEFAULT 0,
       tiktok_providers TEXT NOT NULL DEFAULT '["v2"]',
-      youtube_preset TEXT NOT NULL DEFAULT 'best',
+      youtube_preset TEXT NOT NULL DEFAULT 'auto-video-audio',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );

@@ -1,6 +1,7 @@
 export type Platform = "tiktok" | "youtube" | "pinterest" | "instagram";
 export type YoutubePreset =
-  | "automatic"
+  | "auto-video-audio"
+  | "auto-audio-only"
   | "best"
   | "fast-1080"
   | "fast-720"

@@ -26,11 +26,15 @@ describe("user settings", () => {
   test("returns youtube preset default", () => {
     const settings = getDefaultUserSettings();
 
-    expect(settings.platformPreferences.youtube.preset).toBe("best");
+    expect(settings.platformPreferences.youtube.preset).toBe("auto-video-audio");
   });
 
   test("parses invalid youtube preset as default", () => {
-    expect(parseYoutubePresetInput("invalid")).toBe("best");
+    expect(parseYoutubePresetInput("invalid")).toBe("auto-video-audio");
+  });
+
+  test("maps legacy automatic preset to the new default", () => {
+    expect(parseYoutubePresetInput("automatic")).toBe("auto-video-audio");
   });
 
   test("preserves youtube preset when toggling verbose output", () => {
