@@ -22,6 +22,47 @@ export type YtDlpRunCommand = (
   hooks?: YtDlpCommandHooks,
 ) => Promise<YtDlpCommandResult>;
 
+function normalizePostprocessMessage(line: string): string | null {
+  const message = line.replace(/^\[[^\]]+\]\s*/, "").trim();
+  if (!message) {
+    return null;
+  }
+
+  if (/^Destination:/i.test(message)) {
+    return null;
+  }
+
+  if (/^Deleting original file /i.test(message)) {
+    return null;
+  }
+
+  if (/^Correcting container in /i.test(message)) {
+    return "finalizing container...";
+  }
+
+  if (/^Merging formats into /i.test(message)) {
+    return "merging media streams...";
+  }
+
+  if (/^Remuxing video from /i.test(message)) {
+    return "remuxing video...";
+  }
+
+  if (/^(Adding|Embedding) metadata to /i.test(message)) {
+    return "embedding metadata...";
+  }
+
+  if (/^(Adding|Embedding) thumbnail to /i.test(message)) {
+    return "embedding thumbnail...";
+  }
+
+  if (/^Extracting audio/i.test(message)) {
+    return "extracting audio...";
+  }
+
+  return message;
+}
+
 function parseSizeToBytes(size: string): number | undefined {
   const normalized = size.replace(/~/g, "").trim();
   const match = normalized.match(/^(\d+(?:\.\d+)?)\s*([KMGT]?i?B)$/i);
@@ -161,9 +202,14 @@ function parseProgressLine(line: string): DownloadProgress | null {
     line.startsWith("[ExtractAudio]") ||
     line.startsWith("[Fixup")
   ) {
+    const message = normalizePostprocessMessage(line);
+    if (!message) {
+      return null;
+    }
+
     return {
       stage: "postprocess",
-      message: line.replace(/^\[[^\]]+\]\s*/, ""),
+      message,
     };
   }
 

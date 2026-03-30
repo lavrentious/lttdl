@@ -164,9 +164,56 @@ describe("YoutubeMusicProvider", () => {
     expect(executedCommand).toContain("--add-metadata");
     expect(executedCommand).toContain("--embed-thumbnail");
     expect(result.res.contentType).toBe("music");
-    expect(progressStages).toEqual(["download", "postprocess", "completed"]);
+    expect(progressStages).toEqual(["download", "completed"]);
 
     result.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("ignores destination postprocess noise in progress updates", async () => {
+    const tempDir = createTempDir();
+    const progressMessages: string[] = [];
+    const provider = new YoutubeMusicProvider({
+      id: "youtube-music",
+      searchMode: "music",
+    }, {
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd, hooks) => {
+        await hooks?.onStdoutLine?.("[ExtractAudio] Destination: /tmp/song.mp3");
+        await hooks?.onStdoutLine?.("[ExtractAudio] Extracting audio");
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+        await Bun.write(finalPath, "audio");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            title: "Song title",
+            duration: 222,
+            webpage_url: "https://www.youtube.com/watch?v=song",
+          }),
+          stderr: "",
+        };
+      },
+    });
+
+    await provider.download(
+      {
+        id: "song",
+        url: "https://www.youtube.com/watch?v=song",
+        title: "Song title",
+      },
+      {
+        tempDir,
+        onProgress: (progress) => {
+          if (progress.stage === "postprocess") {
+            progressMessages.push(progress.message);
+          }
+        },
+      },
+    );
+
+    expect(progressMessages).toEqual(["extracting audio..."]);
     rmSync(tempDir, { recursive: true, force: true });
   });
 
