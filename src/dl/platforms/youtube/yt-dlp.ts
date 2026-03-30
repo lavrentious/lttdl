@@ -5,6 +5,7 @@ import { logger } from "src/utils/logger";
 import type { DownloadProgress } from "src/dl/types";
 
 export const YT_DLP_BINARY = "yt-dlp";
+export const YT_DLP_COMMON_ARGS = ["--js-runtimes", "bun"] as const;
 
 export type YtDlpCommandResult = {
   exitCode: number;

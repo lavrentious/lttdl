@@ -17,6 +17,7 @@ import {
   resolveYtDlpFinalPath,
   runYtDlpCommand,
   YT_DLP_BINARY,
+  YT_DLP_COMMON_ARGS,
   type YtDlpCommandHooks,
   type YtDlpCommandResult,
   type YtDlpRunCommand,
@@ -135,6 +136,7 @@ async function fetchMetadata(
 ): Promise<YoutubeMetadata> {
   const { exitCode, stdout, stderr } = await runCommandImpl([
     YT_DLP_BINARY,
+    ...YT_DLP_COMMON_ARGS,
     "--no-playlist",
     "--dump-single-json",
     url,
@@ -483,6 +485,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
     );
     const { exitCode, stdout, stderr } = await this.deps.runCommand([
       YT_DLP_BINARY,
+      ...YT_DLP_COMMON_ARGS,
       "--no-playlist",
       "--print-json",
       "--progress",

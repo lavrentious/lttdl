@@ -2,6 +2,7 @@ import { randomUUIDv7 } from "bun";
 import { existsSync, rmSync } from "fs";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
+import { formatSizeMegabytes } from "src/dl/size-guard";
 import { config } from "src/utils/env-validation";
 import { createCenteredSquareJpeg } from "src/utils/image";
 import { getAudioDuration, moveFile, writeMp3Metadata } from "src/utils/video";
@@ -11,6 +12,7 @@ import {
   resolveYtDlpFinalPath,
   runYtDlpCommand,
   YT_DLP_BINARY,
+  YT_DLP_COMMON_ARGS,
   type YtDlpRunCommand,
 } from "src/dl/platforms/youtube/yt-dlp";
 import type {
@@ -50,6 +52,22 @@ type DownloadMetadata = {
   album?: string;
   playlist_title?: string;
   thumbnail?: string;
+  filesize?: number;
+  filesize_approx?: number;
+  formats?: DownloadFormat[];
+};
+
+type DownloadFormat = {
+  format_id?: string;
+  ext?: string;
+  filesize?: number;
+  filesize_approx?: number;
+  tbr?: number;
+  abr?: number;
+  vbr?: number;
+  acodec?: string;
+  vcodec?: string;
+  protocol?: string;
 };
 
 type YoutubeMusicProviderDeps = {
@@ -74,12 +92,134 @@ type YoutubeMusicProviderConfig = {
 
 const YT_DLP_CONCURRENT_FRAGMENTS = "4";
 
+function estimateFormatSizeBytes(
+  format: DownloadFormat,
+  durationSeconds: number | undefined,
+): number | undefined {
+  if (typeof format.filesize === "number") {
+    return format.filesize;
+  }
+  if (typeof format.filesize_approx === "number") {
+    return format.filesize_approx;
+  }
+  if (!durationSeconds || durationSeconds <= 0) {
+    return undefined;
+  }
+
+  const bitrateKbps =
+    typeof format.tbr === "number"
+      ? format.tbr
+      : typeof format.vbr === "number" || typeof format.abr === "number"
+        ? (format.vbr || 0) + (format.abr || 0)
+        : undefined;
+  if (!bitrateKbps || bitrateKbps <= 0) {
+    return undefined;
+  }
+
+  return (bitrateKbps * 1000 * durationSeconds) / 8;
+}
+
+function getFormatBitrateKbps(format: DownloadFormat): number {
+  return Math.max(format.abr || 0, format.tbr || 0, format.vbr || 0);
+}
+
+function formatHasAudio(format: DownloadFormat): boolean {
+  return !!format.acodec && format.acodec !== "none";
+}
+
+function formatHasVideo(format: DownloadFormat): boolean {
+  return !!format.vcodec && format.vcodec !== "none";
+}
+
+function formatCompatibilityScore(format: DownloadFormat): number {
+  let score = 0;
+  if (format.ext === "m4a") {
+    score += 10_000;
+  } else if (format.ext === "mp4") {
+    score += 8_000;
+  } else if (format.ext === "webm") {
+    score += 6_000;
+  }
+  if (format.protocol === "https" || format.protocol === "http") {
+    score += 2_000;
+  }
+  return score;
+}
+
+function buildAudioOversizeMessage(options: {
+  estimatedSizeBytes?: number;
+  exact?: boolean;
+} = {}): string {
+  if (
+    typeof options.estimatedSizeBytes === "number" &&
+    Number.isFinite(options.estimatedSizeBytes)
+  ) {
+    return options.exact
+      ? `audio is too large to upload (${formatSizeMegabytes(options.estimatedSizeBytes)})`
+      : `audio is likely too large to upload (about ${formatSizeMegabytes(options.estimatedSizeBytes)})`;
+  }
+
+  return options.exact ? "audio is too large to upload" : "audio is likely too large to upload";
+}
+
+function chooseAudioDownloadFormat(
+  metadata: DownloadMetadata,
+  maxFileSize?: number,
+): { formatArgs: string[]; estimatedSizeBytes?: number; description: string } {
+  const duration = metadata.duration;
+  const audioCandidates = (metadata.formats || [])
+    .filter((format) => formatHasAudio(format) && !formatHasVideo(format))
+    .filter((format) => !!format.format_id)
+    .map((format) => ({
+      formatId: format.format_id!,
+      estimatedSizeBytes: estimateFormatSizeBytes(format, duration),
+      score: getFormatBitrateKbps(format) * 1_000 + formatCompatibilityScore(format),
+    }))
+    .filter(
+      (candidate) =>
+        maxFileSize === undefined ||
+        candidate.estimatedSizeBytes === undefined ||
+        candidate.estimatedSizeBytes <= maxFileSize,
+    )
+    .sort((a, b) => b.score - a.score);
+
+  const bestCandidate = audioCandidates[0];
+  if (bestCandidate) {
+    return {
+      formatArgs: ["-f", bestCandidate.formatId],
+      estimatedSizeBytes: bestCandidate.estimatedSizeBytes,
+      description: `audio format ${bestCandidate.formatId}`,
+    };
+  }
+
+  if (maxFileSize !== undefined) {
+    const fallbackEstimate =
+      typeof metadata.filesize === "number"
+        ? metadata.filesize
+        : typeof metadata.filesize_approx === "number"
+          ? metadata.filesize_approx
+          : undefined;
+    throw new DownloadError(
+      buildAudioOversizeMessage({
+        estimatedSizeBytes: fallbackEstimate,
+        exact: fallbackEstimate !== undefined,
+      }),
+    );
+  }
+
+  return {
+    formatArgs: ["-f", "ba"],
+    description: "best available audio format",
+  };
+}
+
 async function fetchMetadata(
   runCommandImpl: YoutubeMusicProviderDeps["runCommand"],
   url: string,
 ): Promise<DownloadMetadata> {
   const { exitCode, stdout, stderr } = await runCommandImpl([
     YT_DLP_BINARY,
+    ...YT_DLP_COMMON_ARGS,
     "--no-playlist",
     "--dump-single-json",
     url,
@@ -226,6 +366,7 @@ export class YoutubeMusicProvider implements MusicProvider {
         : `ytsearch${limit}:${query}`;
     const command = [
       YT_DLP_BINARY,
+      ...YT_DLP_COMMON_ARGS,
       "--dump-single-json",
       ...(this.provider.searchMode === "youtube" ? ["--flat-playlist"] : []),
       ...(this.provider.searchMode === "music" ? ["--playlist-items", `1:${limit}`] : []),
@@ -260,9 +401,12 @@ export class YoutubeMusicProvider implements MusicProvider {
     const prefetchMetadata = await fetchMetadata(this.deps.runCommand, result.url).catch(
       () => ({}),
     );
+    const audioPlan = chooseAudioDownloadFormat(prefetchMetadata, options?.maxFileSize);
     const { exitCode, stdout, stderr } = await this.deps.runCommand(
       [
         YT_DLP_BINARY,
+        ...YT_DLP_COMMON_ARGS,
+        ...audioPlan.formatArgs,
         "--extract-audio",
         "--audio-format",
         "mp3",
