@@ -664,6 +664,72 @@ describe("YoutubeMusicProvider", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  test("reduces mp3 bitrate for long tracks to stay within max file size", async () => {
+    const tempDir = createTempDir();
+    let downloadCommand: string[] = [];
+    const provider = new YoutubeMusicProvider({
+      id: "youtube-music",
+      searchMode: "music",
+    }, {
+      which: () => "/usr/bin/yt-dlp",
+      finalizeAudioFile: async (inputPath, outputPath) => {
+        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+      },
+      runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Long song",
+              duration: 4100,
+              formats: [
+                {
+                  format_id: "249",
+                  acodec: "opus",
+                  vcodec: "none",
+                  abr: 51,
+                  tbr: 51,
+                  ext: "webm",
+                  filesize: 24 * 1024 * 1024,
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+
+        downloadCommand = cmd;
+        const outputArgIndex = cmd.indexOf("--output");
+        if (outputArgIndex >= 0) {
+          const outputTemplate = cmd[outputArgIndex + 1]!;
+          const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+          await Bun.write(finalPath, "audio");
+        }
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({}),
+          stderr: "",
+        };
+      },
+    });
+
+    await provider.download(
+      {
+        id: "song",
+        url: "https://www.youtube.com/watch?v=song",
+        title: "Long song",
+      },
+      {
+        tempDir,
+        maxFileSize: 50 * 1024 * 1024,
+      },
+    );
+
+    expect(downloadCommand).toContain("--audio-quality");
+    expect(downloadCommand).toContain("96K");
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
   test("fails clearly when yt-dlp is missing", async () => {
     const provider = new YoutubeMusicProvider({
       id: "youtube-music",

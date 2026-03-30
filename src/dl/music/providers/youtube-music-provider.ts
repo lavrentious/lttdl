@@ -91,6 +91,9 @@ type YoutubeMusicProviderConfig = {
 };
 
 const YT_DLP_CONCURRENT_FRAGMENTS = "4";
+const MP3_TARGET_BITRATES_KBPS = [320, 256, 224, 192, 160, 128, 112, 96, 80, 64, 48, 32];
+const MP3_V0_ESTIMATED_BITRATE_KBPS = 280;
+const MP3_CONTAINER_OVERHEAD_BYTES = 512 * 1024;
 
 function estimateFormatSizeBytes(
   format: DownloadFormat,
@@ -188,6 +191,46 @@ function buildAudioOversizeMessage(options: {
   }
 
   return options.exact ? "audio is too large to upload" : "audio is likely too large to upload";
+}
+
+function estimateMp3SizeBytes(durationSeconds: number, bitrateKbps: number): number {
+  return durationSeconds * bitrateKbps * 1000 / 8 + MP3_CONTAINER_OVERHEAD_BYTES;
+}
+
+function chooseMp3AudioQuality(
+  durationSeconds: number | undefined,
+  maxFileSize?: number,
+): { value: string; estimatedSizeBytes?: number; exact: boolean } {
+  if (!maxFileSize || !durationSeconds || durationSeconds <= 0) {
+    return { value: "0", exact: false };
+  }
+
+  const v0Estimate = estimateMp3SizeBytes(durationSeconds, MP3_V0_ESTIMATED_BITRATE_KBPS);
+  if (v0Estimate <= maxFileSize) {
+    return {
+      value: "0",
+      estimatedSizeBytes: v0Estimate,
+      exact: false,
+    };
+  }
+
+  const bitrate = MP3_TARGET_BITRATES_KBPS.find(
+    (candidate) => estimateMp3SizeBytes(durationSeconds, candidate) <= maxFileSize,
+  );
+  if (!bitrate) {
+    throw new DownloadError(
+      buildAudioOversizeMessage({
+        estimatedSizeBytes: estimateMp3SizeBytes(durationSeconds, MP3_TARGET_BITRATES_KBPS.at(-1)!),
+        exact: true,
+      }),
+    );
+  }
+
+  return {
+    value: `${bitrate}K`,
+    estimatedSizeBytes: estimateMp3SizeBytes(durationSeconds, bitrate),
+    exact: true,
+  };
 }
 
 function chooseAudioDownloadFormat(
@@ -451,9 +494,10 @@ export class YoutubeMusicProvider implements MusicProvider {
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
     const prefetchMetadata = await fetchMetadata(this.deps.runCommand, result.url).catch(
-      () => ({}),
+      () => ({} as DownloadMetadata),
     );
     const audioPlan = chooseAudioDownloadFormat(prefetchMetadata, options?.maxFileSize);
+    const mp3Quality = chooseMp3AudioQuality(prefetchMetadata.duration, options?.maxFileSize);
     const { exitCode, stdout, stderr } = await this.deps.runCommand(
       [
         YT_DLP_BINARY,
@@ -463,7 +507,7 @@ export class YoutubeMusicProvider implements MusicProvider {
         "--audio-format",
         "mp3",
         "--audio-quality",
-        "0",
+        mp3Quality.value,
         "--concurrent-fragments",
         YT_DLP_CONCURRENT_FRAGMENTS,
         "--add-metadata",
