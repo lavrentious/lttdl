@@ -1,5 +1,5 @@
 import { $, spawn } from "bun";
-import { existsSync, rmSync } from "fs";
+import { existsSync, renameSync, rmSync } from "fs";
 import { withTimeout } from "./async";
 import { logger } from "./logger";
 
@@ -124,6 +124,11 @@ export async function getAudioDuration(path: string): Promise<number | undefined
     : undefined;
 }
 
+export async function isMp4File(path: string): Promise<boolean> {
+  const header = new Uint8Array(await Bun.file(path).slice(0, 12).arrayBuffer());
+  return getTypeFromBinaryData(header) === "mp4";
+}
+
 async function runFfmpeg(args: string[], label: string): Promise<void> {
   const ffmpegPath = Bun.which("ffmpeg");
   if (!ffmpegPath) {
@@ -207,4 +212,16 @@ export async function ensureMp4Video(inputPath: string, outputPath: string): Pro
     ],
     "ffmpeg re-encode",
   );
+}
+
+export function moveFile(sourcePath: string, targetPath: string): void {
+  if (sourcePath === targetPath) {
+    return;
+  }
+
+  if (existsSync(targetPath)) {
+    rmSync(targetPath);
+  }
+
+  renameSync(sourcePath, targetPath);
 }

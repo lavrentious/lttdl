@@ -159,6 +159,8 @@ describe("YoutubeMusicProvider", () => {
     expect(executedCommand).toContain("mp3");
     expect(executedCommand).toContain("--audio-quality");
     expect(executedCommand).toContain("0");
+    expect(executedCommand).toContain("--concurrent-fragments");
+    expect(executedCommand).toContain("4");
     expect(executedCommand).toContain("--add-metadata");
     expect(executedCommand).toContain("--embed-thumbnail");
     expect(result.res.contentType).toBe("music");

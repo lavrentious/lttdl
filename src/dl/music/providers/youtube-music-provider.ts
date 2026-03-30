@@ -50,6 +50,8 @@ type YoutubeMusicProviderConfig = {
   searchMode: "music" | "youtube";
 };
 
+const YT_DLP_CONCURRENT_FRAGMENTS = "4";
+
 function parseDurationString(value?: string): number | undefined {
   if (!value) {
     return undefined;
@@ -169,6 +171,8 @@ export class YoutubeMusicProvider implements MusicProvider {
         "mp3",
         "--audio-quality",
         "0",
+        "--concurrent-fragments",
+        YT_DLP_CONCURRENT_FRAGMENTS,
         "--add-metadata",
         "--embed-thumbnail",
         "--output",

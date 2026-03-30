@@ -5,6 +5,8 @@ import {
   ensureMp4Video,
   getAudioDuration,
   getVideoMetadata,
+  isMp4File,
+  moveFile,
 } from "src/utils/video";
 import { AssetDownloader } from "./asset-downloader";
 import { isLikelyOversizeVideo } from "./size-guard";
@@ -64,7 +66,11 @@ export class AssetProcessor {
         onProgress,
       );
       finalPath = `${downloadedPath}.mp4`;
-      await ensureMp4Video(downloadedPath, finalPath);
+      if (await isMp4File(downloadedPath).catch(() => false)) {
+        moveFile(downloadedPath, finalPath);
+      } else {
+        await ensureMp4Video(downloadedPath, finalPath);
+      }
       const sourcePath = downloadedPath;
       const mp4Path = finalPath;
       const metadata = await getVideoMetadata(mp4Path);
@@ -79,7 +85,9 @@ export class AssetProcessor {
         path: mp4Path,
         size: Bun.file(mp4Path).size,
         cleanup: () => {
-          Bun.file(sourcePath).delete().catch();
+          if (sourcePath !== mp4Path) {
+            Bun.file(sourcePath).delete().catch();
+          }
           Bun.file(mp4Path).delete().catch();
         },
       } satisfies VideoVariant;

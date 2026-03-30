@@ -235,24 +235,16 @@ describe("YoutubePlatformHandler", () => {
 
   test("downloads fast-1080 preset as video", async () => {
     const tempDir = createTempDir();
+    let commandCount = 0;
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Video title",
-              width: 1920,
-              height: 1080,
-              webpage_url: "https://youtu.be/example-fast-1080",
-            }),
-            stderr: "",
-          };
-        }
+        commandCount += 1;
         expect(cmd).toContain(
           "b[ext=mp4][height<=1080]/bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[height<=1080]/bv*[height<=1080]+ba/b",
         );
+        expect(cmd).toContain("--concurrent-fragments");
+        expect(cmd).toContain("4");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
         const finalPath = outputTemplate.replace("%(ext)s", "mp4");
@@ -277,6 +269,7 @@ describe("YoutubePlatformHandler", () => {
       { tempDir },
     );
 
+    expect(commandCount).toBe(1);
     expect(result.res.contentType).toBe("video");
     result.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
@@ -284,24 +277,16 @@ describe("YoutubePlatformHandler", () => {
 
   test("downloads fast-720 preset as video", async () => {
     const tempDir = createTempDir();
+    let commandCount = 0;
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Video title",
-              width: 1280,
-              height: 720,
-              webpage_url: "https://youtu.be/example-fast-720",
-            }),
-            stderr: "",
-          };
-        }
+        commandCount += 1;
         expect(cmd).toContain(
           "b[ext=mp4][height<=720]/bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[height<=720]/bv*[height<=720]+ba/b",
         );
+        expect(cmd).toContain("--concurrent-fragments");
+        expect(cmd).toContain("4");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
         const finalPath = outputTemplate.replace("%(ext)s", "mp4");
@@ -326,6 +311,7 @@ describe("YoutubePlatformHandler", () => {
       { tempDir },
     );
 
+    expect(commandCount).toBe(1);
     expect(result.res.contentType).toBe("video");
     result.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
@@ -333,24 +319,16 @@ describe("YoutubePlatformHandler", () => {
 
   test("downloads best preset as video", async () => {
     const tempDir = createTempDir();
+    let commandCount = 0;
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Video title",
-              width: 1920,
-              height: 1080,
-              webpage_url: "https://youtu.be/example",
-            }),
-            stderr: "",
-          };
-        }
+        commandCount += 1;
         expect(cmd).toContain("bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b");
         expect(cmd).toContain("--merge-output-format");
         expect(cmd).toContain("--progress");
+        expect(cmd).toContain("--concurrent-fragments");
+        expect(cmd).toContain("4");
         expect(cmd).not.toContain("--recode-video");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
@@ -376,6 +354,7 @@ describe("YoutubePlatformHandler", () => {
       { tempDir },
     );
 
+    expect(commandCount).toBe(1);
     expect(result.res.contentType).toBe("video");
     if (result.res.contentType !== "video") {
       throw new Error("expected a video result");
@@ -396,17 +375,9 @@ describe("YoutubePlatformHandler", () => {
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Fallback container video",
-              webpage_url: "https://youtu.be/fallback",
-            }),
-            stderr: "",
-          };
-        }
         expect(cmd).toContain("--progress");
+        expect(cmd).toContain("--concurrent-fragments");
+        expect(cmd).toContain("4");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
         const finalPath = outputTemplate.replace("%(ext)s", "webm");
@@ -447,22 +418,16 @@ describe("YoutubePlatformHandler", () => {
   test("downloads best-audio preset as music and cleans up the file", async () => {
     const tempDir = createTempDir();
     let finalPath = "";
+    let commandCount = 0;
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Audio title",
-              webpage_url: "https://youtube.com/watch?v=example",
-            }),
-            stderr: "",
-          };
-        }
+        commandCount += 1;
         expect(cmd).toContain("--audio-format");
         expect(cmd).toContain("mp3");
         expect(cmd).toContain("--progress");
+        expect(cmd).toContain("--concurrent-fragments");
+        expect(cmd).toContain("4");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
         finalPath = outputTemplate.replace("%(ext)s", "mp3");
@@ -485,6 +450,7 @@ describe("YoutubePlatformHandler", () => {
       { tempDir },
     );
 
+    expect(commandCount).toBe(1);
     expect(result.res.contentType).toBe("music");
     if (result.res.contentType !== "music") {
       throw new Error("expected a music result");
@@ -505,22 +471,16 @@ describe("YoutubePlatformHandler", () => {
 
   test("downloads mid-audio preset as music", async () => {
     const tempDir = createTempDir();
+    let commandCount = 0;
     const handler = new YoutubePlatformHandler({
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Mid audio title",
-              webpage_url: "https://youtube.com/watch?v=mid-audio",
-            }),
-            stderr: "",
-          };
-        }
+        commandCount += 1;
         expect(cmd).toContain("ba[abr<=128]/ba");
         expect(cmd).toContain("--audio-quality");
         expect(cmd).toContain("7");
+        expect(cmd).toContain("--concurrent-fragments");
+        expect(cmd).toContain("4");
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
         const finalPath = outputTemplate.replace("%(ext)s", "mp3");
@@ -543,6 +503,7 @@ describe("YoutubePlatformHandler", () => {
       { tempDir },
     );
 
+    expect(commandCount).toBe(1);
     expect(result.res.contentType).toBe("music");
     result.cleanup();
     rmSync(tempDir, { recursive: true, force: true });

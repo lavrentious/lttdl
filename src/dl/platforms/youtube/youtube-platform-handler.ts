@@ -70,6 +70,8 @@ type YoutubeHandlerDeps = {
   getVideoResolution: (filePath: string) => Promise<{ width: number; height: number }>;
 };
 
+const YT_DLP_CONCURRENT_FRAGMENTS = "4";
+
 function getPresetArgs(preset: YoutubePreset): string[] {
   switch (preset) {
     case "auto-video-audio":
@@ -143,6 +145,10 @@ async function fetchMetadata(
   }
 
   return parseYtDlpMetadata<YoutubeMetadata>(stdout) || {};
+}
+
+function requiresMetadataPrefetch(preset: YoutubePreset): boolean {
+  return preset === "auto-video-audio" || preset === "auto-audio-only";
 }
 
 function estimateFormatSizeBytes(
@@ -433,22 +439,24 @@ export class YoutubePlatformHandler implements PlatformHandler {
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
-    const metadata = await fetchMetadata(this.deps.runCommand, url);
-    const plan = buildDownloadPlan(preset, metadata, options?.maxFileSize);
+    const metadata = requiresMetadataPrefetch(preset)
+      ? await fetchMetadata(this.deps.runCommand, url)
+      : undefined;
+    const plan = buildDownloadPlan(preset, metadata || {}, options?.maxFileSize);
     const estimatedSize = plan.estimatedSizeBytes;
     if (
       options?.maxFileSize !== undefined &&
       ((estimatedSize !== undefined && estimatedSize > options.maxFileSize) ||
         (estimatedSize === undefined &&
           plan.kind === "video" &&
-          isLikelyOversizeVideo(metadata.duration, options.maxFileSize)))
+          isLikelyOversizeVideo(metadata?.duration, options.maxFileSize)))
     ) {
       throw new DownloadError(
         buildOversizeMessage({
           estimatedSizeBytes:
             estimatedSize !== undefined
               ? estimatedSize
-              : metadata.duration !== undefined
+              : metadata?.duration !== undefined
                 ? estimateVideoSizeFromDuration(metadata.duration)
                 : undefined,
           exact: estimatedSize !== undefined,
@@ -479,6 +487,8 @@ export class YoutubePlatformHandler implements PlatformHandler {
       "--print-json",
       "--progress",
       "--newline",
+      "--concurrent-fragments",
+      YT_DLP_CONCURRENT_FRAGMENTS,
       "--output",
       outputTemplate,
       ...plan.formatArgs,
@@ -500,7 +510,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
     }
 
     const runtimeMetadata = {
-      ...metadata,
+      ...(metadata || {}),
       ...(parseYtDlpMetadata<YoutubeMetadata>(stdout) || {}),
     };
     logger.debug(`yt-dlp metadata: ${JSON.stringify(runtimeMetadata)}`);
