@@ -123,6 +123,31 @@ function getFormatBitrateKbps(format: DownloadFormat): number {
   return Math.max(format.abr || 0, format.tbr || 0, format.vbr || 0);
 }
 
+function getEffectiveAudioBitrateKbps(format: DownloadFormat): number {
+  if (typeof format.abr === "number" && format.abr > 0) {
+    return format.abr;
+  }
+
+  if (!formatHasVideo(format)) {
+    return Math.max(format.tbr || 0, format.vbr || 0);
+  }
+
+  return 0;
+}
+
+function getAudioCodecQualityMultiplier(format: DownloadFormat): number {
+  if (format.acodec?.includes("opus")) {
+    return 1.2;
+  }
+  if (format.acodec?.includes("mp4a") || format.acodec?.includes("aac")) {
+    return 1.0;
+  }
+  if (format.acodec?.includes("mp3")) {
+    return 0.95;
+  }
+  return 0.9;
+}
+
 function formatHasAudio(format: DownloadFormat): boolean {
   return !!format.acodec && format.acodec !== "none";
 }
@@ -133,15 +158,18 @@ function formatHasVideo(format: DownloadFormat): boolean {
 
 function formatCompatibilityScore(format: DownloadFormat): number {
   let score = 0;
-  if (format.ext === "m4a") {
-    score += 10_000;
-  } else if (format.ext === "mp4") {
-    score += 8_000;
-  } else if (format.ext === "webm") {
-    score += 6_000;
+  if (format.acodec?.includes("opus")) {
+    score += 20_000;
+  } else if (format.acodec?.includes("mp4a") || format.acodec?.includes("aac")) {
+    score += 15_000;
+  } else if (format.acodec?.includes("mp3")) {
+    score += 12_000;
   }
   if (format.protocol === "https" || format.protocol === "http") {
     score += 2_000;
+  }
+  if (!formatHasVideo(format)) {
+    score += 1_000;
   }
   return score;
 }
@@ -168,12 +196,22 @@ function chooseAudioDownloadFormat(
 ): { formatArgs: string[]; estimatedSizeBytes?: number; description: string } {
   const duration = metadata.duration;
   const audioCandidates = (metadata.formats || [])
-    .filter((format) => formatHasAudio(format) && !formatHasVideo(format))
+    .filter((format) => formatHasAudio(format))
     .filter((format) => !!format.format_id)
     .map((format) => ({
       formatId: format.format_id!,
+      hasVideo: formatHasVideo(format),
       estimatedSizeBytes: estimateFormatSizeBytes(format, duration),
-      score: getFormatBitrateKbps(format) * 1_000 + formatCompatibilityScore(format),
+      effectiveAudioBitrateKbps: getEffectiveAudioBitrateKbps(format),
+      audioQualityScore:
+        getEffectiveAudioBitrateKbps(format) * getAudioCodecQualityMultiplier(format),
+      totalBitrateKbps: getFormatBitrateKbps(format),
+      score:
+        getEffectiveAudioBitrateKbps(format) *
+          getAudioCodecQualityMultiplier(format) *
+          1_000_000 +
+        getFormatBitrateKbps(format) * 1_000 +
+        formatCompatibilityScore(format),
     }))
     .filter(
       (candidate) =>
@@ -181,14 +219,28 @@ function chooseAudioDownloadFormat(
         candidate.estimatedSizeBytes === undefined ||
         candidate.estimatedSizeBytes <= maxFileSize,
     )
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+
+      if (a.hasVideo !== b.hasVideo) {
+        return Number(a.hasVideo) - Number(b.hasVideo);
+      }
+
+      return (a.estimatedSizeBytes || Number.MAX_SAFE_INTEGER) -
+        (b.estimatedSizeBytes || Number.MAX_SAFE_INTEGER);
+    });
 
   const bestCandidate = audioCandidates[0];
   if (bestCandidate) {
     return {
       formatArgs: ["-f", bestCandidate.formatId],
       estimatedSizeBytes: bestCandidate.estimatedSizeBytes,
-      description: `audio format ${bestCandidate.formatId}`,
+      description:
+        `audio format ${bestCandidate.formatId} ` +
+        `(${Math.round(bestCandidate.audioQualityScore || bestCandidate.totalBitrateKbps)}q` +
+        `${bestCandidate.hasVideo ? ", progressive" : ", audio only"})`,
     };
   }
 

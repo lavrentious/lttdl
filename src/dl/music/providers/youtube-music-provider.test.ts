@@ -464,6 +464,152 @@ describe("YoutubeMusicProvider", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  test("prefers opus audio-only over slightly higher bitrate aac for mp3 extraction", async () => {
+    const tempDir = createTempDir();
+    let downloadCommand: string[] = [];
+    const provider = new YoutubeMusicProvider({
+      id: "youtube-music",
+      searchMode: "music",
+    }, {
+      which: () => "/usr/bin/yt-dlp",
+      finalizeAudioFile: async (inputPath, outputPath) => {
+        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+      },
+      runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Song title",
+              duration: 269,
+              formats: [
+                {
+                  format_id: "140",
+                  acodec: "mp4a.40.2",
+                  vcodec: "none",
+                  abr: 129.57,
+                  tbr: 129.57,
+                  ext: "m4a",
+                },
+                {
+                  format_id: "251",
+                  acodec: "opus",
+                  vcodec: "none",
+                  abr: 127.512,
+                  tbr: 127.512,
+                  ext: "webm",
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+
+        downloadCommand = cmd;
+        const outputArgIndex = cmd.indexOf("--output");
+        if (outputArgIndex >= 0) {
+          const outputTemplate = cmd[outputArgIndex + 1]!;
+          const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+          await Bun.write(finalPath, "audio");
+        }
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({}),
+          stderr: "",
+        };
+      },
+    });
+
+    await provider.download(
+      {
+        id: "song",
+        url: "https://www.youtube.com/watch?v=song",
+        title: "Song title",
+      },
+      {
+        tempDir,
+        maxFileSize: 50 * 1024 * 1024,
+      },
+    );
+
+    expect(downloadCommand).toContain("-f");
+    expect(downloadCommand).toContain("251");
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("considers progressive formats when they expose a higher audio bitrate", async () => {
+    const tempDir = createTempDir();
+    let downloadCommand: string[] = [];
+    const provider = new YoutubeMusicProvider({
+      id: "youtube-music",
+      searchMode: "music",
+    }, {
+      which: () => "/usr/bin/yt-dlp",
+      finalizeAudioFile: async (inputPath, outputPath) => {
+        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+      },
+      runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Song title",
+              duration: 180,
+              formats: [
+                {
+                  format_id: "251",
+                  acodec: "opus",
+                  vcodec: "none",
+                  abr: 128,
+                  tbr: 128,
+                  ext: "webm",
+                },
+                {
+                  format_id: "18",
+                  acodec: "aac",
+                  vcodec: "h264",
+                  abr: 192,
+                  tbr: 400,
+                  ext: "mp4",
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+
+        downloadCommand = cmd;
+        const outputArgIndex = cmd.indexOf("--output");
+        if (outputArgIndex >= 0) {
+          const outputTemplate = cmd[outputArgIndex + 1]!;
+          const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+          await Bun.write(finalPath, "audio");
+        }
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({}),
+          stderr: "",
+        };
+      },
+    });
+
+    await provider.download(
+      {
+        id: "song",
+        url: "https://www.youtube.com/watch?v=song",
+        title: "Song title",
+      },
+      {
+        tempDir,
+        maxFileSize: 50 * 1024 * 1024,
+      },
+    );
+
+    expect(downloadCommand).toContain("-f");
+    expect(downloadCommand).toContain("18");
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
   test("fails early when no audio format can fit under max file size", async () => {
     const tempDir = createTempDir();
     const provider = new YoutubeMusicProvider({
