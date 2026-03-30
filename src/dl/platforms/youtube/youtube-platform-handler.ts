@@ -1,5 +1,5 @@
 import { randomUUIDv7 } from "bun";
-import { existsSync, readdirSync, rmSync } from "fs";
+import { existsSync, rmSync } from "fs";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
 import {
@@ -11,11 +11,20 @@ import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
 import { getAudioDuration, getVideoMetadata, getVideoResolution } from "src/utils/video";
 import { DEFAULT_YOUTUBE_PRESET } from "./types";
+import {
+  emitProgressFromYtDlpLine,
+  parseYtDlpMetadata,
+  resolveYtDlpFinalPath,
+  runYtDlpCommand,
+  YT_DLP_BINARY,
+  type YtDlpCommandHooks,
+  type YtDlpCommandResult,
+  type YtDlpRunCommand,
+} from "./yt-dlp";
 import type { PlatformHandler, ResolveContext } from "../../platform-handler";
 import type {
   DownloadExecutionResult,
   DownloadOptions,
-  DownloadProgress,
   YoutubePreset,
 } from "../../types";
 
@@ -55,118 +64,11 @@ type DownloadPlan = {
   verboseDetails?: string;
 };
 
-type CommandResult = {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-};
-
-type CommandHooks = {
-  onStdoutLine?: (line: string) => void | Promise<void>;
-  onStderrLine?: (line: string) => void | Promise<void>;
-};
-
 type YoutubeHandlerDeps = {
   which: (binary: string) => string | null;
-  runCommand: (cmd: string[], hooks?: CommandHooks) => Promise<CommandResult>;
+  runCommand: YtDlpRunCommand;
   getVideoResolution: (filePath: string) => Promise<{ width: number; height: number }>;
 };
-
-const YT_DLP_BINARY = "yt-dlp";
-
-function parseSizeToBytes(size: string): number | undefined {
-  const normalized = size.replace(/~/g, "").trim();
-  const match = normalized.match(/^(\d+(?:\.\d+)?)\s*([KMGT]?i?B)$/i);
-  if (!match) {
-    return undefined;
-  }
-
-  const value = Number(match[1]);
-  const unit = match[2]!.toUpperCase();
-  const multipliers: Record<string, number> = {
-    B: 1,
-    KB: 1000,
-    MB: 1000 ** 2,
-    GB: 1000 ** 3,
-    TB: 1000 ** 4,
-    KIB: 1024,
-    MIB: 1024 ** 2,
-    GIB: 1024 ** 3,
-    TIB: 1024 ** 4,
-  };
-
-  const multiplier = multipliers[unit];
-  return multiplier ? value * multiplier : undefined;
-}
-
-async function readStream(
-  stream: ReadableStream<Uint8Array> | null | undefined,
-  onLine?: (line: string) => void | Promise<void>,
-): Promise<string> {
-  if (!stream) {
-    return "";
-  }
-
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let output = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    const chunk = decoder.decode(value, { stream: true });
-    output += chunk;
-    buffer += chunk;
-
-    let newlineIndex = buffer.indexOf("\n");
-    while (newlineIndex >= 0) {
-      const line = buffer.slice(0, newlineIndex).trim();
-      buffer = buffer.slice(newlineIndex + 1);
-      if (line) {
-        await onLine?.(line);
-      }
-      newlineIndex = buffer.indexOf("\n");
-    }
-  }
-
-  const tail = decoder.decode();
-  if (tail) {
-    output += tail;
-    buffer += tail;
-  }
-
-  const finalLine = buffer.trim();
-  if (finalLine) {
-    await onLine?.(finalLine);
-  }
-
-  return output;
-}
-
-async function runCommand(cmd: string[], hooks: CommandHooks = {}): Promise<CommandResult> {
-  logger.debug(`running yt-dlp command: ${cmd.join(" ")}`);
-  const process = Bun.spawn({
-    cmd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [exitCode, stdout, stderr] = await Promise.all([
-    process.exited,
-    readStream(process.stdout, hooks.onStdoutLine),
-    readStream(process.stderr, hooks.onStderrLine),
-  ]);
-
-  return {
-    exitCode,
-    stdout,
-    stderr,
-  };
-}
 
 function getPresetArgs(preset: YoutubePreset): string[] {
   switch (preset) {
@@ -225,24 +127,6 @@ function getPresetPostprocessArgs(preset: YoutubePreset): string[] {
   }
 }
 
-function parseMetadata(stdout: string): YoutubeMetadata {
-  const lines = stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const candidate = lines.at(-1);
-
-  if (!candidate) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(candidate) as YoutubeMetadata;
-  } catch {
-    return {};
-  }
-}
-
 async function fetchMetadata(
   runCommandImpl: YoutubeHandlerDeps["runCommand"],
   url: string,
@@ -258,7 +142,7 @@ async function fetchMetadata(
     throw new DownloadError(stderr.trim() || "yt-dlp metadata fetch failed");
   }
 
-  return parseMetadata(stdout);
+  return parseYtDlpMetadata<YoutubeMetadata>(stdout) || {};
 }
 
 function estimateFormatSizeBytes(
@@ -514,91 +398,13 @@ function buildDownloadPlan(
   };
 }
 
-function parseProgressLine(line: string): DownloadProgress | null {
-  const percentMatch = line.match(
-    /^\[download\]\s+(\d+(?:\.\d+)?)% of\s+(.+?)(?: at\s+(.+?)\s+ETA\s+(.+))?$/,
-  );
-  if (percentMatch) {
-    const totalBytes = parseSizeToBytes(percentMatch[2] || "");
-    const percent = Number(percentMatch[1]);
-    return {
-      stage: "download",
-      percent,
-      bytesDownloaded:
-        totalBytes !== undefined ? (totalBytes * percent) / 100 : undefined,
-      totalBytes,
-      speed: percentMatch[3]?.trim(),
-      eta: percentMatch[4]?.trim(),
-    };
-  }
-
-  if (
-    line.startsWith("[Merger]") ||
-    line.startsWith("[VideoRemuxer]") ||
-    line.startsWith("[ExtractAudio]") ||
-    line.startsWith("[Fixup")
-  ) {
-    return {
-      stage: "postprocess",
-      message: line.replace(/^\[[^\]]+\]\s*/, ""),
-    };
-  }
-
-  return null;
-}
-
-async function emitProgressFromLine(
-  line: string,
-  onProgress?: (progress: DownloadProgress) => void | Promise<void>,
-) {
-  const progress = parseProgressLine(line);
-  if (!progress) {
-    return;
-  }
-
-  logger.debug(`yt-dlp progress: ${JSON.stringify(progress)}`);
-  await onProgress?.(progress);
-}
-
-function resolveFinalPath(
-  tempDir: string,
-  basename: string,
-  kind: DownloadPlan["kind"],
-): string {
-  if (kind === "audio") {
-    const expectedPath = path.join(tempDir, `${basename}.mp3`);
-    if (existsSync(expectedPath)) {
-      logger.debug(`resolved yt-dlp audio output path: ${expectedPath}`);
-      return expectedPath;
-    }
-  } else {
-    const preferredPath = path.join(tempDir, `${basename}.mp4`);
-    if (existsSync(preferredPath)) {
-      logger.debug(`resolved yt-dlp video output path as mp4: ${preferredPath}`);
-      return preferredPath;
-    }
-  }
-
-  const matchedPath = readdirSync(tempDir)
-    .filter((entry) => entry.startsWith(`${basename}.`))
-    .filter((entry) => !entry.endsWith(".part"))
-    .map((entry) => path.join(tempDir, entry))
-    .find((entryPath) => existsSync(entryPath));
-  if (matchedPath) {
-    logger.debug(`resolved yt-dlp fallback output path: ${matchedPath}`);
-    return matchedPath;
-  }
-
-  throw new DownloadError("yt-dlp completed but produced no output file");
-}
-
 export class YoutubePlatformHandler implements PlatformHandler {
   readonly platform = "youtube" as const;
 
   constructor(
     private readonly deps: YoutubeHandlerDeps = {
       which: (binary) => Bun.which(binary),
-      runCommand,
+      runCommand: runYtDlpCommand,
       getVideoResolution,
     },
   ) {}
@@ -680,10 +486,10 @@ export class YoutubePlatformHandler implements PlatformHandler {
       url,
     ], {
       onStdoutLine: async (line) => {
-        await emitProgressFromLine(line, options?.onProgress);
+        await emitProgressFromYtDlpLine(line, options?.onProgress);
       },
       onStderrLine: async (line) => {
-        await emitProgressFromLine(line, options?.onProgress);
+        await emitProgressFromYtDlpLine(line, options?.onProgress);
       },
     });
     logger.debug(`yt-dlp exited with code ${exitCode}`);
@@ -695,10 +501,14 @@ export class YoutubePlatformHandler implements PlatformHandler {
 
     const runtimeMetadata = {
       ...metadata,
-      ...parseMetadata(stdout),
+      ...(parseYtDlpMetadata<YoutubeMetadata>(stdout) || {}),
     };
     logger.debug(`yt-dlp metadata: ${JSON.stringify(runtimeMetadata)}`);
-    const finalPath = resolveFinalPath(tempDir, basename, plan.kind);
+    const finalPath = resolveYtDlpFinalPath(
+      tempDir,
+      basename,
+      plan.kind === "audio" ? "mp3" : "mp4",
+    );
     logger.debug(
       `youtube final container: ${path.extname(finalPath).replace(/^\./, "") || "unknown"}`,
     );

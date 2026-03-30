@@ -13,9 +13,16 @@ import {
   YOUTUBE_PRESET_DESCRIPTIONS,
   YOUTUBE_PRESET_LABELS,
 } from "src/dl/platforms/youtube/types";
+import {
+  ALL_MUSIC_SEARCH_PROVIDERS,
+  MUSIC_SEARCH_PROVIDER_DESCRIPTIONS,
+  MUSIC_SEARCH_PROVIDER_LABELS,
+  type MusicSearchProviderId,
+} from "src/dl/music/types";
 import type { YoutubePreset } from "src/dl/types";
 import {
   getUserSettings,
+  updateUserMusicSearchProvider,
   updateUserTiktokProviders,
   updateUserVerboseOutput,
   updateUserYoutubePreset,
@@ -44,10 +51,12 @@ function formatMainSettingsMessage(userId: number): string {
     `verbose output controls whether the bot sends link details after successful downloads.\n` +
     `tiktok providers choose the internal extraction paths for tiktok links.\n` +
     `youtube preset chooses how youtube links are downloaded with yt-dlp.\n\n` +
+    `music search provider chooses how /music searches for tracks before downloading.\n\n` +
     `*current*\n` +
     `verbose: ${settings.verboseOutput ? "on" : "off"}\n` +
     `tiktok providers: ${settings.platformPreferences.tiktok.providers.join(", ")}\n` +
-    `youtube preset: ${YOUTUBE_PRESET_LABELS[settings.platformPreferences.youtube.preset]}`
+    `youtube preset: ${YOUTUBE_PRESET_LABELS[settings.platformPreferences.youtube.preset]}\n` +
+    `music search provider: ${MUSIC_SEARCH_PROVIDER_LABELS[settings.platformPreferences.music.searchProvider]}`
   );
 }
 
@@ -77,6 +86,19 @@ function formatYoutubePresetMessage(userId: number): string {
   );
 }
 
+function formatMusicProviderMessage(userId: number): string {
+  const settings = getUserSettings(userId);
+
+  return (
+    `*music search provider*\n\n` +
+    `this provider controls how \`/music\` searches for tracks before downloading the selected result.\n\n` +
+    `*current*: ${MUSIC_SEARCH_PROVIDER_LABELS[settings.platformPreferences.music.searchProvider]}\n\n` +
+    ALL_MUSIC_SEARCH_PROVIDERS.map(
+      (provider) => MUSIC_SEARCH_PROVIDER_DESCRIPTIONS[provider],
+    ).join("\n")
+  );
+}
+
 function buildMainSettingsKeyboard(userId: number): InlineKeyboard {
   const settings = getUserSettings(userId);
 
@@ -94,6 +116,11 @@ function buildMainSettingsKeyboard(userId: number): InlineKeyboard {
     .text(
       "youtube preset >>",
       `${SETTINGS_CALLBACK_PREFIX}:youtube_preset:${userId}`,
+    )
+    .row()
+    .text(
+      "music search provider >>",
+      `${SETTINGS_CALLBACK_PREFIX}:music_provider:${userId}`,
     );
 }
 
@@ -131,9 +158,26 @@ function buildYoutubePresetKeyboard(userId: number): InlineKeyboard {
   return keyboard.text("back", `${SETTINGS_CALLBACK_PREFIX}:main:${userId}`);
 }
 
+function buildMusicProviderKeyboard(userId: number): InlineKeyboard {
+  const settings = getUserSettings(userId);
+  const currentProvider = settings.platformPreferences.music.searchProvider;
+  const keyboard = new InlineKeyboard();
+
+  for (const provider of ALL_MUSIC_SEARCH_PROVIDERS) {
+    keyboard
+      .text(
+        `${selectIcon(currentProvider === provider)} ${MUSIC_SEARCH_PROVIDER_LABELS[provider]}`,
+        `${SETTINGS_CALLBACK_PREFIX}:set_music_provider:${userId}:${provider}`,
+      )
+      .row();
+  }
+
+  return keyboard.text("back", `${SETTINGS_CALLBACK_PREFIX}:main:${userId}`);
+}
+
 async function editSettingsMessage(
   ctx: CallbackQueryContext<Context>,
-  view: "main" | "providers" | "youtube_preset",
+  view: "main" | "providers" | "youtube_preset" | "music_provider",
   userId: number,
 ) {
   const text =
@@ -141,13 +185,17 @@ async function editSettingsMessage(
       ? formatMainSettingsMessage(userId)
       : view === "providers"
         ? formatProvidersMessage(userId)
-        : formatYoutubePresetMessage(userId);
+        : view === "youtube_preset"
+          ? formatYoutubePresetMessage(userId)
+          : formatMusicProviderMessage(userId);
   const replyMarkup =
     view === "main"
       ? buildMainSettingsKeyboard(userId)
       : view === "providers"
         ? buildProvidersKeyboard(userId)
-        : buildYoutubePresetKeyboard(userId);
+        : view === "youtube_preset"
+          ? buildYoutubePresetKeyboard(userId)
+          : buildMusicProviderKeyboard(userId);
 
   await ctx.editMessageText(text, {
     parse_mode: "Markdown",
@@ -157,7 +205,12 @@ async function editSettingsMessage(
 
 function parseCallbackData(data: string):
   | {
-      action: "main" | "providers" | "youtube_preset" | "toggle_verbose";
+      action:
+        | "main"
+        | "providers"
+        | "youtube_preset"
+        | "music_provider"
+        | "toggle_verbose";
       userId: number;
     }
   | {
@@ -169,6 +222,11 @@ function parseCallbackData(data: string):
       action: "set_youtube_preset";
       userId: number;
       preset: YoutubePreset;
+    }
+  | {
+      action: "set_music_provider";
+      userId: number;
+      provider: MusicSearchProviderId;
     }
   | null {
   const parts = data.split(":");
@@ -185,6 +243,7 @@ function parseCallbackData(data: string):
     parts[1] === "main" ||
     parts[1] === "providers" ||
     parts[1] === "youtube_preset" ||
+    parts[1] === "music_provider" ||
     parts[1] === "toggle_verbose"
   ) {
     return { action: parts[1], userId };
@@ -211,6 +270,18 @@ function parseCallbackData(data: string):
       action: "set_youtube_preset",
       userId,
       preset: parts[3] as YoutubePreset,
+    };
+  }
+
+  if (
+    parts[1] === "set_music_provider" &&
+    parts[3] &&
+    ALL_MUSIC_SEARCH_PROVIDERS.includes(parts[3] as MusicSearchProviderId)
+  ) {
+    return {
+      action: "set_music_provider",
+      userId,
+      provider: parts[3] as MusicSearchProviderId,
     };
   }
 
@@ -251,7 +322,8 @@ export async function settingsCallbackQuery(
   if (
     parsed.action === "main" ||
     parsed.action === "providers" ||
-    parsed.action === "youtube_preset"
+    parsed.action === "youtube_preset" ||
+    parsed.action === "music_provider"
   ) {
     await editSettingsMessage(ctx, parsed.action, parsed.userId);
     await ctx.answerCallbackQuery();
@@ -289,6 +361,13 @@ export async function settingsCallbackQuery(
   if (parsed.action === "set_youtube_preset") {
     updateUserYoutubePreset(parsed.userId, parsed.preset);
     await editSettingsMessage(ctx, "youtube_preset", parsed.userId);
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  if (parsed.action === "set_music_provider") {
+    updateUserMusicSearchProvider(parsed.userId, parsed.provider);
+    await editSettingsMessage(ctx, "music_provider", parsed.userId);
     await ctx.answerCallbackQuery();
     return;
   }

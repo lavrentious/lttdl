@@ -55,7 +55,7 @@ export function splitLinkBlock(
 }
 
 export async function sendChunkedLinks(
-  ctx: Filter<Context, "message">,
+  ctx: Context,
   linkBlocks: string[],
 ): Promise<void> {
   const normalizedBlocks = linkBlocks.flatMap((block) => splitLinkBlock(block));

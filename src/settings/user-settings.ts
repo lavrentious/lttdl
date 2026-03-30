@@ -9,6 +9,11 @@ import {
   ALL_YOUTUBE_PRESETS,
   DEFAULT_YOUTUBE_PRESET,
 } from "src/dl/platforms/youtube/types";
+import {
+  ALL_MUSIC_SEARCH_PROVIDERS,
+  DEFAULT_MUSIC_SEARCH_PROVIDER,
+  type MusicSearchProviderId,
+} from "src/dl/music/types";
 import type { YoutubePreset } from "src/dl/types";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
@@ -22,6 +27,9 @@ export type UserSettings = {
     youtube: {
       preset: YoutubePreset;
     };
+    music: {
+      searchProvider: MusicSearchProviderId;
+    };
   };
 };
 
@@ -29,6 +37,7 @@ type UserSettingsRow = {
   verbose_output: number;
   tiktok_providers: string;
   youtube_preset: string;
+  music_search_provider: string;
 };
 
 const DEFAULT_TIKTOK_PROVIDERS: TiktokProvider[] = ["v2"];
@@ -40,6 +49,9 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
     },
     youtube: {
       preset: DEFAULT_YOUTUBE_PRESET,
+    },
+    music: {
+      searchProvider: DEFAULT_MUSIC_SEARCH_PROVIDER,
     },
   },
 };
@@ -80,6 +92,12 @@ function normalizeYoutubePreset(value: string): YoutubePreset {
     : DEFAULT_YOUTUBE_PRESET;
 }
 
+function normalizeMusicSearchProvider(value: string): MusicSearchProviderId {
+  return ALL_MUSIC_SEARCH_PROVIDERS.includes(value as MusicSearchProviderId)
+    ? (value as MusicSearchProviderId)
+    : DEFAULT_MUSIC_SEARCH_PROVIDER;
+}
+
 function getDbOrThrow(): Database {
   if (!db) {
     throw new Error("user settings database is not initialized");
@@ -110,6 +128,9 @@ function rowToUserSettings(row: UserSettingsRow): UserSettings {
       youtube: {
         preset: normalizeYoutubePreset(row.youtube_preset),
       },
+      music: {
+        searchProvider: normalizeMusicSearchProvider(row.music_search_provider),
+      },
     },
   };
 }
@@ -126,6 +147,12 @@ function ensureUserSettingsColumns(database: Database) {
       ALTER TABLE user_settings ADD COLUMN youtube_preset TEXT NOT NULL DEFAULT 'auto-video-audio';
     `);
   } catch {}
+
+  try {
+    database.exec(`
+      ALTER TABLE user_settings ADD COLUMN music_search_provider TEXT NOT NULL DEFAULT 'youtube-music';
+    `);
+  } catch {}
 }
 
 function upsertUserSettings(userId: number, nextSettings: UserSettings): UserSettings {
@@ -137,13 +164,15 @@ function upsertUserSettings(userId: number, nextSettings: UserSettings): UserSet
           verbose_output,
           tiktok_providers,
           youtube_preset,
+          music_search_provider,
           updated_at
         )
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(user_id) DO UPDATE SET
           verbose_output = excluded.verbose_output,
           tiktok_providers = excluded.tiktok_providers,
           youtube_preset = excluded.youtube_preset,
+          music_search_provider = excluded.music_search_provider,
           updated_at = CURRENT_TIMESTAMP
       `,
     )
@@ -152,6 +181,7 @@ function upsertUserSettings(userId: number, nextSettings: UserSettings): UserSet
       Number(nextSettings.verboseOutput),
       JSON.stringify(nextSettings.platformPreferences.tiktok.providers),
       nextSettings.platformPreferences.youtube.preset,
+      nextSettings.platformPreferences.music.searchProvider,
     );
 
   return getUserSettings(userId);
@@ -169,6 +199,7 @@ export function initUserSettingsDb() {
       verbose_output INTEGER NOT NULL DEFAULT 0,
       tiktok_providers TEXT NOT NULL DEFAULT '["v2"]',
       youtube_preset TEXT NOT NULL DEFAULT 'auto-video-audio',
+      music_search_provider TEXT NOT NULL DEFAULT 'youtube-music',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -186,6 +217,9 @@ export function getDefaultUserSettings(): UserSettings {
       youtube: {
         preset: DEFAULT_USER_SETTINGS.platformPreferences.youtube.preset,
       },
+      music: {
+        searchProvider: DEFAULT_USER_SETTINGS.platformPreferences.music.searchProvider,
+      },
     },
   };
 }
@@ -193,7 +227,7 @@ export function getDefaultUserSettings(): UserSettings {
 export function getUserSettings(userId: number): UserSettings {
   const row = getDbOrThrow()
     .query(
-      "SELECT verbose_output, tiktok_providers, youtube_preset FROM user_settings WHERE user_id = ?",
+      "SELECT verbose_output, tiktok_providers, youtube_preset, music_search_provider FROM user_settings WHERE user_id = ?",
     )
     .get(userId) as UserSettingsRow | null;
 
@@ -250,6 +284,23 @@ export function updateUserYoutubePreset(
   });
 }
 
+export function updateUserMusicSearchProvider(
+  userId: number,
+  searchProvider: MusicSearchProviderId,
+): UserSettings {
+  const current = getUserSettings(userId);
+
+  return upsertUserSettings(userId, {
+    ...current,
+    platformPreferences: {
+      ...current.platformPreferences,
+      music: {
+        searchProvider: normalizeMusicSearchProvider(searchProvider),
+      },
+    },
+  });
+}
+
 export function parseTiktokProvidersInput(input: string): TiktokProvider[] {
   const providers = input
     .split(",")
@@ -261,4 +312,10 @@ export function parseTiktokProvidersInput(input: string): TiktokProvider[] {
 
 export function parseYoutubePresetInput(input: string): YoutubePreset {
   return normalizeYoutubePreset(input.trim().toLowerCase());
+}
+
+export function parseMusicSearchProviderInput(
+  input: string,
+): MusicSearchProviderId {
+  return normalizeMusicSearchProvider(input.trim().toLowerCase());
 }

@@ -4,6 +4,7 @@ import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
 import { initUserSettingsDb } from "src/settings/user-settings";
 import { downloadCommand } from "./commands/download";
+import { musicCallbackQuery, musicCommand } from "./commands/music";
 
 let botInstance: Bot | null = null;
 
@@ -47,14 +48,17 @@ function createBot() {
 
   bot.command("start", (ctx) =>
     ctx.reply(
-      "hi.\n" +
-        "this is a bot for downloading tiktoks without watermarks, youtube media, pinterest pins/boards, and instagram posts/reels. no ads, no spam, no sponsors.\n" +
+        "hi.\n" +
+        "this is a bot for downloading tiktoks without watermarks, youtube media, pinterest pins/boards, instagram posts/reels, and searched music. no ads, no spam, no sponsors.\n" +
         "send a tiktok/youtube/pinterest/instagram link and get the media.\n" +
-        "use /settings to configure verbose output, tiktok providers, and youtube preset.",
+        "use /music <query> to search tracks and download one as mp3.\n" +
+        "use /settings to configure verbose output, tiktok providers, youtube preset, and music search provider.",
     ),
   );
   bot.command("settings", settingsCommand);
+  bot.command("music", musicCommand);
   bot.callbackQuery(/^settings:/, settingsCallbackQuery);
+  bot.callbackQuery(/^music:/, musicCallbackQuery);
   bot.on("message", downloadCommand);
 
   bot.catch(logError);
