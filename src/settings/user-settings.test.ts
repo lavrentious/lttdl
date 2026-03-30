@@ -49,6 +49,10 @@ describe("user settings", () => {
     expect(parseMusicSearchProviderInput("invalid")).toBe("youtube-music");
   });
 
+  test("parses youtube music provider aliases exactly", () => {
+    expect(parseMusicSearchProviderInput("youtube")).toBe("youtube");
+  });
+
   test("preserves youtube preset when toggling verbose output", () => {
     const userId = 101;
     updateUserYoutubePreset(userId, "mid-audio");
@@ -84,11 +88,11 @@ describe("user settings", () => {
 
   test("persists music provider updates", () => {
     const userId = 104;
-    updateUserMusicSearchProvider(userId, "youtube-music");
+    updateUserMusicSearchProvider(userId, "youtube");
 
     const settings = getUserSettings(userId);
 
-    expect(settings.platformPreferences.music.searchProvider).toBe("youtube-music");
+    expect(settings.platformPreferences.music.searchProvider).toBe("youtube");
   });
 });
 

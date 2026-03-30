@@ -24,6 +24,8 @@ type SearchMetadataEntry = {
   uploader?: string;
   channel?: string;
   duration?: number;
+  duration_string?: string;
+  artists?: string[];
   webpage_url?: string;
   url?: string;
 };
@@ -42,6 +44,27 @@ type YoutubeMusicProviderDeps = {
   which: (binary: string) => string | null;
   runCommand: YtDlpRunCommand;
 };
+
+type YoutubeMusicProviderConfig = {
+  id: "youtube-music" | "youtube";
+  searchMode: "music" | "youtube";
+};
+
+function parseDurationString(value?: string): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parts = value
+    .trim()
+    .split(":")
+    .map((part) => Number(part));
+  if (!parts.length || parts.some((part) => !Number.isFinite(part) || part < 0)) {
+    return undefined;
+  }
+
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
 
 function toWatchUrl(entry: SearchMetadataEntry): string | null {
   if (entry.webpage_url) {
@@ -72,9 +95,11 @@ function normalizeSearchResults(metadata: SearchMetadata): MusicSearchResult[] {
       id: entry.id,
       url,
       title: entry.title,
-      uploader: entry.uploader || entry.channel,
+      uploader: entry.artists?.join(", ") || entry.uploader || entry.channel,
       durationSeconds:
-        typeof entry.duration === "number" ? Math.round(entry.duration) : undefined,
+        typeof entry.duration === "number"
+          ? Math.round(entry.duration)
+          : parseDurationString(entry.duration_string),
     });
   }
 
@@ -82,27 +107,35 @@ function normalizeSearchResults(metadata: SearchMetadata): MusicSearchResult[] {
 }
 
 export class YoutubeMusicProvider implements MusicProvider {
-  readonly id = "youtube-music" as const;
-
   constructor(
+    private readonly provider: YoutubeMusicProviderConfig,
     private readonly deps: YoutubeMusicProviderDeps = {
       which: (binary) => Bun.which(binary),
       runCommand: runYtDlpCommand,
     },
   ) {}
 
+  get id() {
+    return this.provider.id;
+  }
+
   async search(query: string, limit: number): Promise<MusicSearchResult[]> {
     if (!this.deps.which(YT_DLP_BINARY)) {
       throw new DownloadError("yt-dlp is not installed");
     }
 
-    const searchQuery = `ytsearch${limit}:${query} official audio`;
-    const { exitCode, stdout, stderr } = await this.deps.runCommand([
+    const searchInput =
+      this.provider.searchMode === "music"
+        ? `https://music.youtube.com/search?q=${encodeURIComponent(query)}#songs`
+        : `ytsearch${limit}:${query}`;
+    const command = [
       YT_DLP_BINARY,
       "--dump-single-json",
-      "--flat-playlist",
-      searchQuery,
-    ]);
+      ...(this.provider.searchMode === "youtube" ? ["--flat-playlist"] : []),
+      ...(this.provider.searchMode === "music" ? ["--playlist-items", `1:${limit}`] : []),
+      searchInput,
+    ];
+    const { exitCode, stdout, stderr } = await this.deps.runCommand(command);
 
     if (exitCode !== 0) {
       throw new DownloadError(stderr.trim() || "yt-dlp music search failed");

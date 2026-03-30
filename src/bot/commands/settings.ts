@@ -51,7 +51,7 @@ function formatMainSettingsMessage(userId: number): string {
     `verbose output controls whether the bot sends link details after successful downloads.\n` +
     `tiktok providers choose the internal extraction paths for tiktok links.\n` +
     `youtube preset chooses how youtube links are downloaded with yt-dlp.\n\n` +
-    `music search provider chooses how /music searches for tracks before downloading.\n\n` +
+    `music search provider chooses whether /music searches the YouTube Music songs section or regular YouTube videos before downloading.\n\n` +
     `*current*\n` +
     `verbose: ${settings.verboseOutput ? "on" : "off"}\n` +
     `tiktok providers: ${settings.platformPreferences.tiktok.providers.join(", ")}\n` +
@@ -91,7 +91,7 @@ function formatMusicProviderMessage(userId: number): string {
 
   return (
     `*music search provider*\n\n` +
-    `this provider controls how \`/music\` searches for tracks before downloading the selected result.\n\n` +
+    `this provider controls whether \`/music\` searches the YouTube Music songs section or regular YouTube videos before downloading the selected result.\n\n` +
     `*current*: ${MUSIC_SEARCH_PROVIDER_LABELS[settings.platformPreferences.music.searchProvider]}\n\n` +
     ALL_MUSIC_SEARCH_PROVIDERS.map(
       (provider) => MUSIC_SEARCH_PROVIDER_DESCRIPTIONS[provider],

@@ -1,10 +1,10 @@
 import { Bot } from "grammy";
-import { settingsCallbackQuery, settingsCommand } from "./commands/settings";
+import { initUserSettingsDb } from "src/settings/user-settings";
 import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
-import { initUserSettingsDb } from "src/settings/user-settings";
 import { downloadCommand } from "./commands/download";
 import { musicCallbackQuery, musicCommand } from "./commands/music";
+import { settingsCallbackQuery, settingsCommand } from "./commands/settings";
 
 let botInstance: Bot | null = null;
 
@@ -48,7 +48,7 @@ function createBot() {
 
   bot.command("start", (ctx) =>
     ctx.reply(
-        "hi.\n" +
+      "hi.\n" +
         "this is a bot for downloading tiktoks without watermarks, youtube media, pinterest pins/boards, instagram posts/reels, and searched music. no ads, no spam, no sponsors.\n" +
         "send a tiktok/youtube/pinterest/instagram link and get the media.\n" +
         "use /music <query> to search tracks and download one as mp3.\n" +
@@ -61,7 +61,12 @@ function createBot() {
   bot.callbackQuery(/^music:/, musicCallbackQuery);
   bot.on("message", downloadCommand);
 
-  bot.catch(logError);
+  bot.catch((err) => {
+    logError(err.error);
+    logger.error(
+      `bot middleware error while handling update ${String(err.ctx.update.update_id)}`,
+    );
+  });
 
   return bot;
 }
@@ -87,6 +92,5 @@ export async function initBot() {
     logger.error("bot polling stopped unexpectedly");
     throw error;
   }
-
-  throw new Error("bot polling stopped without an explicit shutdown");
+  logger.warn("bot polling stopped");
 }

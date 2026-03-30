@@ -12,11 +12,16 @@ function createTempDir(): string {
 }
 
 describe("YoutubeMusicProvider", () => {
-  test("searches with ytsearch5 and returns normalized results", async () => {
+  test("searches youtube music songs and returns normalized results", async () => {
     let searchArg = "";
+    let executedCommand: string[] = [];
     const provider = new YoutubeMusicProvider({
+      id: "youtube-music",
+      searchMode: "music",
+    }, {
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd) => {
+        executedCommand = cmd;
         searchArg = cmd.at(-1) || "";
         return {
           exitCode: 0,
@@ -25,13 +30,13 @@ describe("YoutubeMusicProvider", () => {
               {
                 id: "track-1",
                 title: "Track 1",
-                uploader: "Artist 1",
-                duration: 181,
+                artists: ["Artist 1"],
+                duration_string: "3:01",
               },
               {
                 id: "track-2",
                 title: "Track 2",
-                channel: "Artist 2",
+                artists: ["Artist 2", "Artist 3"],
                 duration: 205,
                 webpage_url: "https://www.youtube.com/watch?v=track-2",
               },
@@ -44,7 +49,10 @@ describe("YoutubeMusicProvider", () => {
 
     const results = await provider.search("daft punk", 5);
 
-    expect(searchArg).toBe("ytsearch5:daft punk official audio");
+    expect(executedCommand).not.toContain("--flat-playlist");
+    expect(executedCommand).toContain("--playlist-items");
+    expect(executedCommand).toContain("1:5");
+    expect(searchArg).toBe("https://music.youtube.com/search?q=daft%20punk#songs");
     expect(results).toEqual([
       {
         id: "track-1",
@@ -57,8 +65,48 @@ describe("YoutubeMusicProvider", () => {
         id: "track-2",
         url: "https://www.youtube.com/watch?v=track-2",
         title: "Track 2",
-        uploader: "Artist 2",
+        uploader: "Artist 2, Artist 3",
         durationSeconds: 205,
+      },
+    ]);
+  });
+
+  test("searches regular youtube videos when configured", async () => {
+    let searchArg = "";
+    const provider = new YoutubeMusicProvider({
+      id: "youtube",
+      searchMode: "youtube",
+    }, {
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd) => {
+        searchArg = cmd.at(-1) || "";
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            entries: [
+              {
+                id: "video-1",
+                title: "Video 1",
+                uploader: "Artist 1",
+                duration: 181,
+              },
+            ],
+          }),
+          stderr: "",
+        };
+      },
+    });
+
+    const results = await provider.search("daft punk", 5);
+
+    expect(searchArg).toBe("ytsearch5:daft punk");
+    expect(results).toEqual([
+      {
+        id: "video-1",
+        url: "https://www.youtube.com/watch?v=video-1",
+        title: "Video 1",
+        uploader: "Artist 1",
+        durationSeconds: 181,
       },
     ]);
   });
@@ -68,6 +116,9 @@ describe("YoutubeMusicProvider", () => {
     const progressStages: string[] = [];
     let executedCommand: string[] = [];
     const provider = new YoutubeMusicProvider({
+      id: "youtube-music",
+      searchMode: "music",
+    }, {
       which: () => "/usr/bin/yt-dlp",
       runCommand: async (cmd, hooks) => {
         executedCommand = cmd;
@@ -119,6 +170,9 @@ describe("YoutubeMusicProvider", () => {
 
   test("fails clearly when yt-dlp is missing", async () => {
     const provider = new YoutubeMusicProvider({
+      id: "youtube-music",
+      searchMode: "music",
+    }, {
       which: () => null,
       runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
     });
