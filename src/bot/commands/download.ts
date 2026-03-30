@@ -376,10 +376,17 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         verboseOutput: userSettings.verboseOutput,
         cleanup,
         sendMedia: (variant) =>
-          ctx.replyWithAudio(new InputFile(variant.path, variant.payload.name), {
+          ctx.replyWithAudio(
+            new InputFile(variant.path, variant.payload.filename || variant.payload.name),
+            {
             duration: variant.payload.durationSeconds,
             title: variant.payload.name,
-          }),
+            performer: variant.payload.performer,
+            thumbnail: variant.payload.thumbnailPath
+              ? new InputFile(variant.payload.thumbnailPath)
+              : undefined,
+            },
+          ),
       });
 
       logger.info(`sent audio ${query} to ${ctx.from?.id ?? "unknown user"}`);

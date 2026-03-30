@@ -20,6 +20,7 @@ describe("YoutubeMusicProvider", () => {
       searchMode: "music",
     }, {
       which: () => "/usr/bin/yt-dlp",
+      finalizeAudioFile: async () => {},
       runCommand: async (cmd) => {
         executedCommand = cmd;
         searchArg = cmd.at(-1) || "";
@@ -71,6 +72,42 @@ describe("YoutubeMusicProvider", () => {
     ]);
   });
 
+  test("falls back to channel name when artist metadata is missing", async () => {
+    const provider = new YoutubeMusicProvider({
+      id: "youtube-music",
+      searchMode: "music",
+    }, {
+      which: () => "/usr/bin/yt-dlp",
+      finalizeAudioFile: async () => {},
+      runCommand: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify({
+          entries: [
+            {
+              id: "track-1",
+              title: "Track 1",
+              channel: "Kid Cudi",
+              duration_string: "4:18",
+            },
+          ],
+        }),
+        stderr: "",
+      }),
+    });
+
+    const results = await provider.search("kid cudi mr rager", 5);
+
+    expect(results).toEqual([
+      {
+        id: "track-1",
+        url: "https://www.youtube.com/watch?v=track-1",
+        title: "Track 1",
+        uploader: "Kid Cudi",
+        durationSeconds: 258,
+      },
+    ]);
+  });
+
   test("searches regular youtube videos when configured", async () => {
     let searchArg = "";
     const provider = new YoutubeMusicProvider({
@@ -78,6 +115,7 @@ describe("YoutubeMusicProvider", () => {
       searchMode: "youtube",
     }, {
       which: () => "/usr/bin/yt-dlp",
+      finalizeAudioFile: async () => {},
       runCommand: async (cmd) => {
         searchArg = cmd.at(-1) || "";
         return {
@@ -115,13 +153,46 @@ describe("YoutubeMusicProvider", () => {
     const tempDir = createTempDir();
     const progressStages: string[] = [];
     let executedCommand: string[] = [];
+    let runCount = 0;
+    let finalizeArgs:
+      | {
+          inputPath: string;
+          outputPath: string;
+          options: {
+            title?: string;
+            artist?: string;
+            album?: string;
+            coverPath?: string;
+          };
+        }
+      | undefined;
     const provider = new YoutubeMusicProvider({
       id: "youtube-music",
       searchMode: "music",
     }, {
       which: () => "/usr/bin/yt-dlp",
+      finalizeAudioFile: async (inputPath, outputPath, options) => {
+        finalizeArgs = { inputPath, outputPath, options };
+        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+      },
       runCommand: async (cmd, hooks) => {
+        runCount += 1;
         executedCommand = cmd;
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Song title",
+              track: "Mr. Rager",
+              artist: "",
+              channel: "Kid Cudi",
+              album: "Man on the Moon II",
+              duration: 222,
+              webpage_url: "https://www.youtube.com/watch?v=song",
+            }),
+            stderr: "",
+          };
+        }
         await hooks?.onStdoutLine?.("[download]  50.0% of 10.00MiB at 5.00MiB/s ETA 00:01");
         await hooks?.onStdoutLine?.("[ExtractAudio] Destination: song.mp3");
         const outputArgIndex = cmd.indexOf("--output");
@@ -165,6 +236,23 @@ describe("YoutubeMusicProvider", () => {
     expect(executedCommand).toContain("--embed-thumbnail");
     expect(result.res.contentType).toBe("music");
     expect(progressStages).toEqual(["download", "completed"]);
+    expect(runCount).toBe(2);
+    if (result.res.contentType === "music") {
+      expect(result.res.variants[0]?.downloaded).toBe(true);
+      if (result.res.variants[0]?.downloaded) {
+        expect(result.res.variants[0].payload.name).toBe("Mr. Rager");
+        expect(result.res.variants[0].payload.filename).toBe("Mr. Rager.mp3");
+        expect(result.res.variants[0].payload.performer).toBe("Kid Cudi");
+        expect(result.res.variants[0].payload.details).toBe("Man on the Moon II");
+      }
+    }
+    expect(finalizeArgs).toBeDefined();
+    expect(finalizeArgs?.options).toEqual({
+      title: "Mr. Rager",
+      artist: "Kid Cudi",
+      album: "Man on the Moon II",
+      coverPath: undefined,
+    });
 
     result.cleanup();
     rmSync(tempDir, { recursive: true, force: true });
@@ -178,6 +266,9 @@ describe("YoutubeMusicProvider", () => {
       searchMode: "music",
     }, {
       which: () => "/usr/bin/yt-dlp",
+      finalizeAudioFile: async (inputPath, outputPath) => {
+        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+      },
       runCommand: async (cmd, hooks) => {
         await hooks?.onStdoutLine?.("[ExtractAudio] Destination: /tmp/song.mp3");
         await hooks?.onStdoutLine?.("[ExtractAudio] Extracting audio");
@@ -223,6 +314,7 @@ describe("YoutubeMusicProvider", () => {
       searchMode: "music",
     }, {
       which: () => null,
+      finalizeAudioFile: async () => {},
       runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
     });
 

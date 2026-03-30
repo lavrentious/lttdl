@@ -124,6 +124,13 @@ export async function getAudioDuration(path: string): Promise<number | undefined
     : undefined;
 }
 
+type AudioTagOptions = {
+  title?: string;
+  artist?: string;
+  album?: string;
+  coverPath?: string;
+};
+
 export async function isMp4File(path: string): Promise<boolean> {
   const header = new Uint8Array(await Bun.file(path).slice(0, 12).arrayBuffer());
   return getTypeFromBinaryData(header) === "mp4";
@@ -150,6 +157,45 @@ async function runFfmpeg(args: string[], label: string): Promise<void> {
   if (exitCode !== 0) {
     throw new Error(stderr.trim() || `${label} failed`);
   }
+}
+
+export async function writeMp3Metadata(
+  inputPath: string,
+  outputPath: string,
+  options: AudioTagOptions,
+): Promise<void> {
+  if (existsSync(outputPath)) {
+    rmSync(outputPath);
+  }
+
+  const args = [
+    "-y",
+    "-i",
+    inputPath,
+    ...(options.coverPath ? ["-i", options.coverPath] : []),
+    "-map",
+    "0:a:0",
+    ...(options.coverPath ? ["-map", "1:v:0"] : []),
+    "-c:a",
+    "copy",
+    ...(options.coverPath ? ["-c:v", "mjpeg"] : []),
+    "-id3v2_version",
+    "3",
+    ...(options.title ? ["-metadata", `title=${options.title}`] : []),
+    ...(options.artist ? ["-metadata", `artist=${options.artist}`] : []),
+    ...(options.album ? ["-metadata", `album=${options.album}`] : []),
+    ...(options.coverPath
+      ? [
+          "-metadata:s:v",
+          "title=Album cover",
+          "-metadata:s:v",
+          "comment=Cover (front)",
+        ]
+      : []),
+    outputPath,
+  ];
+
+  await runFfmpeg(args, "ffmpeg audio metadata");
 }
 
 export async function ensureMp4Video(inputPath: string, outputPath: string): Promise<void> {

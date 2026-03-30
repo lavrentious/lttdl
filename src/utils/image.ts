@@ -20,3 +20,23 @@ export async function recodeImageToJpeg(path: string, newPath: string) {
     "image recode",
   );
 }
+
+export async function createCenteredSquareJpeg(
+  input: ArrayBuffer | Uint8Array,
+  outputPath: string,
+  size = 640,
+) {
+  const buffer = input instanceof Uint8Array ? Buffer.from(input) : Buffer.from(new Uint8Array(input));
+
+  await withTimeout(
+    sharp(buffer)
+      .resize(size, size, {
+        fit: "cover",
+        position: "centre",
+      })
+      .jpeg()
+      .toFile(outputPath),
+    IMAGE_PROCESS_TIMEOUT_MS,
+    "image crop",
+  );
+}

@@ -62,8 +62,11 @@ export type PhotoVariant = ContentVariant<{
 
 export type MusicVariant = ContentVariant<{
   name?: string;
+  filename?: string;
+  performer?: string;
   details?: string;
   durationSeconds?: number;
+  thumbnailPath?: string;
 }>;
 
 export type GalleryEntry =

@@ -7,16 +7,20 @@ import {
   type Context,
 } from "grammy";
 import {
+  downloadMusicResult,
+  searchMusic,
+  type MusicSearchResult,
+} from "src/dl/music";
+import type { DownloadProgress, MusicVariant } from "src/dl/types";
+import { DownloadError } from "src/errors/download-error";
+import { getUserSettings } from "src/settings/user-settings";
+import { logError, logger } from "src/utils/logger";
+import { escapeMarkdownV2 } from "src/utils/utils";
+import {
   buildSingleMediaLinksMessage,
   generateMusicLinksEntry,
   sendChunkedLinks,
 } from "./download-presentation";
-import { downloadMusicResult, searchMusic, type MusicSearchResult } from "src/dl/music";
-import { DownloadError } from "src/errors/download-error";
-import { getUserSettings } from "src/settings/user-settings";
-import type { DownloadProgress, MusicVariant } from "src/dl/types";
-import { logError, logger } from "src/utils/logger";
-import { escapeMarkdownV2 } from "src/utils/utils";
 
 const MUSIC_CALLBACK_PREFIX = "music";
 const MAX_FILE_SIZE_MB = 50;
@@ -29,7 +33,9 @@ const SEARCH_TTL_MS = 10 * 60 * 1000;
 type PendingMusicSearch = {
   userId: number;
   query: string;
-  provider: ReturnType<typeof getUserSettings>["platformPreferences"]["music"]["searchProvider"];
+  provider: ReturnType<
+    typeof getUserSettings
+  >["platformPreferences"]["music"]["searchProvider"];
   results: MusicSearchResult[];
   expiresAt: number;
 };
@@ -91,7 +97,9 @@ function formatDuration(durationSeconds?: number): string {
 }
 
 function truncateLabel(value: string, maxLength: number): string {
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
+  return value.length <= maxLength
+    ? value
+    : `${value.slice(0, maxLength - 1)}…`;
 }
 
 function escapeMarkdownV2Url(url: string): string {
@@ -106,7 +114,10 @@ function clampPage(page: number, results: MusicSearchResult[]): number {
   return Math.max(0, Math.min(page, getPageCount(results) - 1));
 }
 
-function getPageResults(results: MusicSearchResult[], page: number): MusicSearchResult[] {
+function getPageResults(
+  results: MusicSearchResult[],
+  page: number,
+): MusicSearchResult[] {
   const normalizedPage = clampPage(page, results);
   const start = normalizedPage * MUSIC_PAGE_SIZE;
   return results.slice(start, start + MUSIC_PAGE_SIZE);
@@ -170,9 +181,14 @@ function createProgressUpdater(
     lastSentAt = now;
     lastText = nextText;
     await ctx.api
-      .editMessageText(loadingMessage.chat.id, loadingMessage.message_id, nextText, {
-        parse_mode: "Markdown",
-      })
+      .editMessageText(
+        loadingMessage.chat.id,
+        loadingMessage.message_id,
+        nextText,
+        {
+          parse_mode: "Markdown",
+        },
+      )
       .catch();
   };
 }
@@ -186,7 +202,10 @@ async function sendMusicResult(params: {
 }) {
   const { ctx, loadingMessage, variants, verboseOutput, cleanup } = params;
   const validFiles = variants
-    .filter((file): file is Extract<MusicVariant, { downloaded: true }> => file.downloaded)
+    .filter(
+      (file): file is Extract<MusicVariant, { downloaded: true }> =>
+        file.downloaded,
+    )
     .filter((file) => file.size <= MAX_FILE_SIZE);
   const links = variants.map((file) =>
     generateMusicLinksEntry(file, validFiles[0]),
@@ -207,10 +226,17 @@ async function sendMusicResult(params: {
   try {
     await ctx.api.sendChatAction(loadingMessage.chat.id, "upload_voice");
     const variant = validFiles[0]!;
-    await ctx.replyWithAudio(new InputFile(variant.path, variant.payload.name), {
-      duration: variant.payload.durationSeconds,
-      title: variant.payload.name,
-    });
+    await ctx.replyWithAudio(
+      new InputFile(variant.path, variant.payload.filename || variant.payload.name),
+      {
+        duration: variant.payload.durationSeconds,
+        title: variant.payload.name,
+        performer: variant.payload.performer,
+        thumbnail: variant.payload.thumbnailPath
+          ? new InputFile(variant.payload.thumbnailPath)
+          : undefined,
+      },
+    );
   } catch (err) {
     uploadFailed = true;
     logError(err);
@@ -246,9 +272,15 @@ function buildSearchKeyboard(
   getPageResults(results, normalizedPage).forEach((result, index) => {
     const duration = formatDuration(result.durationSeconds);
     const resultIndex = offset + index;
-    const label = truncateLabel(`${resultIndex + 1}. ${result.title} [${duration}]`, 64);
+    const label = truncateLabel(
+      `${resultIndex + 1}. ${result.title} [${duration}]`,
+      64,
+    );
     keyboard
-      .text(label, `${MUSIC_CALLBACK_PREFIX}:pick:${userId}:${token}:${resultIndex}`)
+      .text(
+        label,
+        `${MUSIC_CALLBACK_PREFIX}:pick:${userId}:${token}:${resultIndex}`,
+      )
       .row();
   });
 
@@ -275,7 +307,11 @@ function buildSearchKeyboard(
   return keyboard;
 }
 
-function buildSearchMessage(query: string, results: MusicSearchResult[], page: number) {
+function buildSearchMessage(
+  query: string,
+  results: MusicSearchResult[],
+  page: number,
+) {
   const normalizedPage = clampPage(page, results);
   const footer = `page ${normalizedPage + 1}/${getPageCount(results)} - ${results.length} result${
     results.length === 1 ? "" : "s"
@@ -408,7 +444,8 @@ export async function musicCommand(ctx: CommandContext<Context>) {
   } catch (err) {
     logError(err);
     deleteMessageSafe(ctx, loadingMessage);
-    const errMsg = err instanceof DownloadError ? err.message : "internal error";
+    const errMsg =
+      err instanceof DownloadError ? err.message : "internal error";
     await ctx.reply(`failed to search music: ${errMsg}`);
   }
 }
@@ -448,12 +485,14 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
   }
 
   if (data.action === "page") {
-    await editSearchPage(ctx, pending, data.token, data.page).catch(async () => {
-      await ctx.answerCallbackQuery({
-        text: "failed to change page",
-        show_alert: true,
-      });
-    });
+    await editSearchPage(ctx, pending, data.token, data.page).catch(
+      async () => {
+        await ctx.answerCallbackQuery({
+          text: "failed to change page",
+          show_alert: true,
+        });
+      },
+    );
     await ctx.answerCallbackQuery();
     return;
   }
@@ -484,10 +523,14 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
   const userSettings = getUserSettings(data.userId);
 
   try {
-    const { res, cleanup } = await downloadMusicResult(pending.provider, selected, {
-      maxFileSize: MAX_FILE_SIZE,
-      onProgress: progressUpdater,
-    });
+    const { res, cleanup } = await downloadMusicResult(
+      pending.provider,
+      selected,
+      {
+        maxFileSize: MAX_FILE_SIZE,
+        onProgress: progressUpdater,
+      },
+    );
 
     if (res.contentType !== "music") {
       throw new DownloadError("music provider returned an invalid result");
@@ -505,7 +548,8 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
   } catch (err) {
     logError(err);
     deleteMessageSafe(ctx, loadingMessage);
-    const errMsg = err instanceof DownloadError ? err.message : "internal error";
+    const errMsg =
+      err instanceof DownloadError ? err.message : "internal error";
     await ctx.reply(`failed to download: ${errMsg}`);
   }
 }

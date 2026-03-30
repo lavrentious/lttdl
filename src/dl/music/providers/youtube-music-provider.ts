@@ -3,7 +3,8 @@ import { existsSync, rmSync } from "fs";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
 import { config } from "src/utils/env-validation";
-import { getAudioDuration } from "src/utils/video";
+import { createCenteredSquareJpeg } from "src/utils/image";
+import { getAudioDuration, moveFile, writeMp3Metadata } from "src/utils/video";
 import {
   emitProgressFromYtDlpLine,
   parseYtDlpMetadata,
@@ -23,6 +24,7 @@ type SearchMetadataEntry = {
   title?: string;
   uploader?: string;
   channel?: string;
+  creator?: string;
   duration?: number;
   duration_string?: string;
   artists?: string[];
@@ -36,13 +38,33 @@ type SearchMetadata = {
 
 type DownloadMetadata = {
   title?: string;
+  track?: string;
   duration?: number;
   webpage_url?: string;
+  artist?: string;
+  artists?: string[];
+  uploader?: string;
+  channel?: string;
+  creator?: string;
+  creators?: string[];
+  album?: string;
+  playlist_title?: string;
+  thumbnail?: string;
 };
 
 type YoutubeMusicProviderDeps = {
   which: (binary: string) => string | null;
   runCommand: YtDlpRunCommand;
+  finalizeAudioFile: (
+    inputPath: string,
+    outputPath: string,
+    options: {
+      title?: string;
+      artist?: string;
+      album?: string;
+      coverPath?: string;
+    },
+  ) => Promise<void>;
 };
 
 type YoutubeMusicProviderConfig = {
@@ -51,6 +73,24 @@ type YoutubeMusicProviderConfig = {
 };
 
 const YT_DLP_CONCURRENT_FRAGMENTS = "4";
+
+async function fetchMetadata(
+  runCommandImpl: YoutubeMusicProviderDeps["runCommand"],
+  url: string,
+): Promise<DownloadMetadata> {
+  const { exitCode, stdout, stderr } = await runCommandImpl([
+    YT_DLP_BINARY,
+    "--no-playlist",
+    "--dump-single-json",
+    url,
+  ]);
+
+  if (exitCode !== 0) {
+    throw new DownloadError(stderr.trim() || "yt-dlp metadata fetch failed");
+  }
+
+  return parseYtDlpMetadata<DownloadMetadata>(stdout) || {};
+}
 
 function parseDurationString(value?: string): number | undefined {
   if (!value) {
@@ -84,6 +124,59 @@ function toWatchUrl(entry: SearchMetadataEntry): string | null {
   return null;
 }
 
+function resolveArtistName(
+  metadata: Partial<Pick<SearchMetadataEntry, "artists" | "uploader" | "channel" | "creator">> &
+    Partial<
+      Pick<
+        DownloadMetadata,
+        "artist" | "artists" | "uploader" | "channel" | "creator" | "creators"
+      >
+    >,
+): string | undefined {
+  const candidates = [
+    metadata.artist,
+    metadata.artists?.join(", "),
+    metadata.creators?.join(", "),
+    metadata.uploader,
+    metadata.channel,
+    metadata.creator,
+  ];
+
+  return candidates.find((value) => typeof value === "string" && value.trim())?.trim();
+}
+
+function resolveAlbumName(metadata: DownloadMetadata): string | undefined {
+  const candidates = [metadata.album, metadata.playlist_title, metadata.channel];
+  return candidates.find((value) => typeof value === "string" && value.trim())?.trim();
+}
+
+function ensureMp3Filename(name: string | undefined): string {
+  const base = (name?.trim() || "audio").replace(/[\\/:*?\"<>|]/g, "_").trim() || "audio";
+  return base.toLowerCase().endsWith(".mp3") ? base : `${base}.mp3`;
+}
+
+async function createSquareThumbnail(
+  thumbnailUrl: string | undefined,
+  outputPath: string,
+): Promise<string | undefined> {
+  if (!thumbnailUrl) {
+    return undefined;
+  }
+
+  const response = await fetch(thumbnailUrl).catch(() => undefined);
+  if (!response?.ok) {
+    return undefined;
+  }
+
+  const body = await response.arrayBuffer().catch(() => undefined);
+  if (!body) {
+    return undefined;
+  }
+
+  await createCenteredSquareJpeg(body, outputPath).catch(() => undefined);
+  return existsSync(outputPath) ? outputPath : undefined;
+}
+
 function normalizeSearchResults(metadata: SearchMetadata): MusicSearchResult[] {
   const results: MusicSearchResult[] = [];
 
@@ -97,7 +190,7 @@ function normalizeSearchResults(metadata: SearchMetadata): MusicSearchResult[] {
       id: entry.id,
       url,
       title: entry.title,
-      uploader: entry.artists?.join(", ") || entry.uploader || entry.channel,
+      uploader: resolveArtistName(entry),
       durationSeconds:
         typeof entry.duration === "number"
           ? Math.round(entry.duration)
@@ -114,6 +207,7 @@ export class YoutubeMusicProvider implements MusicProvider {
     private readonly deps: YoutubeMusicProviderDeps = {
       which: (binary) => Bun.which(binary),
       runCommand: runYtDlpCommand,
+      finalizeAudioFile: writeMp3Metadata,
     },
   ) {}
 
@@ -163,6 +257,9 @@ export class YoutubeMusicProvider implements MusicProvider {
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
+    const prefetchMetadata = await fetchMetadata(this.deps.runCommand, result.url).catch(
+      () => ({}),
+    );
     const { exitCode, stdout, stderr } = await this.deps.runCommand(
       [
         YT_DLP_BINARY,
@@ -193,8 +290,26 @@ export class YoutubeMusicProvider implements MusicProvider {
       throw new DownloadError(stderr.trim() || "yt-dlp failed");
     }
 
-    const metadata = parseYtDlpMetadata<DownloadMetadata>(stdout) || {};
+    const metadata = {
+      ...prefetchMetadata,
+      ...(parseYtDlpMetadata<DownloadMetadata>(stdout) || {}),
+    };
     const finalPath = resolveYtDlpFinalPath(tempDir, basename, "mp3");
+    const thumbnailPath = await createSquareThumbnail(
+      metadata.thumbnail,
+      path.join(tempDir, `${basename}.jpg`),
+    );
+    const trackName = metadata.track || metadata.title || result.title;
+    const performer = resolveArtistName(metadata) || result.uploader;
+    const album = resolveAlbumName(metadata);
+    const taggedPath = path.join(tempDir, `${basename}.tagged.mp3`);
+    await this.deps.finalizeAudioFile(finalPath, taggedPath, {
+      title: trackName,
+      artist: performer,
+      album,
+      coverPath: thumbnailPath,
+    });
+    moveFile(taggedPath, finalPath);
     await options?.onProgress?.({
       stage: "completed",
       message: "download complete",
@@ -203,6 +318,9 @@ export class YoutubeMusicProvider implements MusicProvider {
     const cleanup = () => {
       if (existsSync(finalPath)) {
         rmSync(finalPath);
+      }
+      if (thumbnailPath && existsSync(thumbnailPath)) {
+        rmSync(thumbnailPath);
       }
     };
 
@@ -216,7 +334,11 @@ export class YoutubeMusicProvider implements MusicProvider {
             path: finalPath,
             size: Bun.file(finalPath).size,
             payload: {
-              name: metadata.title || result.title,
+              name: trackName,
+              filename: ensureMp3Filename(trackName),
+              performer,
+              details: album,
+              thumbnailPath,
               durationSeconds:
                 (typeof metadata.duration === "number"
                   ? Math.round(metadata.duration)
