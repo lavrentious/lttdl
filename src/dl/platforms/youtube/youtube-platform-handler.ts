@@ -72,6 +72,8 @@ type YoutubeHandlerDeps = {
 };
 
 const YT_DLP_CONCURRENT_FRAGMENTS = "4";
+const YT_DLP_METADATA_TIMEOUT_MS = 30_000;
+const YT_DLP_DOWNLOAD_TIMEOUT_MS = 20 * 60 * 1000;
 
 function getPresetArgs(preset: YoutubePreset): string[] {
   switch (preset) {
@@ -134,13 +136,19 @@ async function fetchMetadata(
   runCommandImpl: YoutubeHandlerDeps["runCommand"],
   url: string,
 ): Promise<YoutubeMetadata> {
-  const { exitCode, stdout, stderr } = await runCommandImpl([
-    YT_DLP_BINARY,
-    ...YT_DLP_COMMON_ARGS,
-    "--no-playlist",
-    "--dump-single-json",
-    url,
-  ]);
+  const { exitCode, stdout, stderr } = await runCommandImpl(
+    [
+      YT_DLP_BINARY,
+      ...YT_DLP_COMMON_ARGS,
+      "--no-playlist",
+      "--dump-single-json",
+      url,
+    ],
+    {
+      timeoutMs: YT_DLP_METADATA_TIMEOUT_MS,
+      timeoutLabel: "yt-dlp youtube metadata fetch",
+    },
+  );
 
   if (exitCode !== 0) {
     throw new DownloadError(stderr.trim() || "yt-dlp metadata fetch failed");
@@ -483,28 +491,33 @@ export class YoutubePlatformHandler implements PlatformHandler {
     logger.debug(
       `youtube preset=${preset}, tempDir=${tempDir}, outputTemplate=${outputTemplate}`,
     );
-    const { exitCode, stdout, stderr } = await this.deps.runCommand([
-      YT_DLP_BINARY,
-      ...YT_DLP_COMMON_ARGS,
-      "--no-playlist",
-      "--print-json",
-      "--progress",
-      "--newline",
-      "--concurrent-fragments",
-      YT_DLP_CONCURRENT_FRAGMENTS,
-      "--output",
-      outputTemplate,
-      ...plan.formatArgs,
-      ...plan.postprocessArgs,
-      url,
-    ], {
-      onStdoutLine: async (line) => {
-        await emitProgressFromYtDlpLine(line, options?.onProgress);
+    const { exitCode, stdout, stderr } = await this.deps.runCommand(
+      [
+        YT_DLP_BINARY,
+        ...YT_DLP_COMMON_ARGS,
+        "--no-playlist",
+        "--print-json",
+        "--progress",
+        "--newline",
+        "--concurrent-fragments",
+        YT_DLP_CONCURRENT_FRAGMENTS,
+        "--output",
+        outputTemplate,
+        ...plan.formatArgs,
+        ...plan.postprocessArgs,
+        url,
+      ],
+      {
+        onStdoutLine: async (line) => {
+          await emitProgressFromYtDlpLine(line, options?.onProgress);
+        },
+        onStderrLine: async (line) => {
+          await emitProgressFromYtDlpLine(line, options?.onProgress);
+        },
+        timeoutMs: YT_DLP_DOWNLOAD_TIMEOUT_MS,
+        timeoutLabel: "yt-dlp youtube download",
       },
-      onStderrLine: async (line) => {
-        await emitProgressFromYtDlpLine(line, options?.onProgress);
-      },
-    });
+    );
     logger.debug(`yt-dlp exited with code ${exitCode}`);
 
     if (exitCode !== 0) {

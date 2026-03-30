@@ -16,6 +16,8 @@ export type YtDlpCommandResult = {
 export type YtDlpCommandHooks = {
   onStdoutLine?: (line: string) => void | Promise<void>;
   onStderrLine?: (line: string) => void | Promise<void>;
+  timeoutMs?: number;
+  timeoutLabel?: string;
 };
 
 export type YtDlpRunCommand = (
@@ -148,17 +150,46 @@ export async function runYtDlpCommand(
     stderr: "pipe",
   });
 
-  const [exitCode, stdout, stderr] = await Promise.all([
+  const execution = Promise.all([
     process.exited,
     readStream(process.stdout, hooks.onStdoutLine),
     readStream(process.stderr, hooks.onStderrLine),
   ]);
 
-  return {
-    exitCode,
-    stdout,
-    stderr,
-  };
+  let timeoutId: Timer | null = null;
+  const timedExecution =
+    typeof hooks.timeoutMs === "number" && hooks.timeoutMs > 0
+      ? Promise.race([
+          execution,
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+              try {
+                process.kill();
+              } catch {}
+
+              reject(
+                new Error(
+                  `${hooks.timeoutLabel || "yt-dlp command"} timed out after ${hooks.timeoutMs}ms`,
+                ),
+              );
+            }, hooks.timeoutMs);
+          }),
+        ])
+      : execution;
+
+  try {
+    const [exitCode, stdout, stderr] = await timedExecution;
+
+    return {
+      exitCode,
+      stdout,
+      stderr,
+    };
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 export function parseYtDlpMetadata<T>(stdout: string): T | null {

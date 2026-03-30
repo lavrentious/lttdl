@@ -323,7 +323,7 @@ function buildSearchMessage(
       const resultIndex = normalizedPage * MUSIC_PAGE_SIZE + index;
       const details = [result.uploader, formatDuration(result.durationSeconds)]
         .filter(Boolean)
-        .join(" - ");
+        .join(" · ");
       const escapedTitle = escapeMarkdownV2(result.title);
       const escapedDetails = details ? escapeMarkdownV2(details) : "";
       return `${escapeMarkdownV2(`${resultIndex + 1}. `)}[${escapedTitle}](${escapeMarkdownV2Url(result.url)})${

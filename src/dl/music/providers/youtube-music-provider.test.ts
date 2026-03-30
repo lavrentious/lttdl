@@ -15,15 +15,17 @@ describe("YoutubeMusicProvider", () => {
   test("searches youtube music songs and returns normalized results", async () => {
     let searchArg = "";
     let executedCommand: string[] = [];
+    let timeoutMs: number | undefined;
     const provider = new YoutubeMusicProvider({
       id: "youtube-music",
       searchMode: "music",
     }, {
       which: () => "/usr/bin/yt-dlp",
       finalizeAudioFile: async () => {},
-      runCommand: async (cmd) => {
+      runCommand: async (cmd, hooks) => {
         executedCommand = cmd;
         searchArg = cmd.at(-1) || "";
+        timeoutMs = hooks?.timeoutMs;
         return {
           exitCode: 0,
           stdout: JSON.stringify({
@@ -53,6 +55,7 @@ describe("YoutubeMusicProvider", () => {
     expect(executedCommand).not.toContain("--flat-playlist");
     expect(executedCommand).toContain("--playlist-items");
     expect(executedCommand).toContain("1:5");
+    expect(timeoutMs).toBe(30000);
     expect(searchArg).toBe("https://music.youtube.com/search?q=daft%20punk#songs");
     expect(results).toEqual([
       {
@@ -154,6 +157,7 @@ describe("YoutubeMusicProvider", () => {
     const progressStages: string[] = [];
     let executedCommand: string[] = [];
     let runCount = 0;
+    let downloadTimeoutMs: number | undefined;
     let finalizeArgs:
       | {
           inputPath: string;
@@ -195,6 +199,7 @@ describe("YoutubeMusicProvider", () => {
         }
         await hooks?.onStdoutLine?.("[download]  50.0% of 10.00MiB at 5.00MiB/s ETA 00:01");
         await hooks?.onStdoutLine?.("[ExtractAudio] Destination: song.mp3");
+        downloadTimeoutMs = hooks?.timeoutMs;
         const outputArgIndex = cmd.indexOf("--output");
         if (outputArgIndex >= 0) {
           const outputTemplate = cmd[outputArgIndex + 1]!;
@@ -241,6 +246,7 @@ describe("YoutubeMusicProvider", () => {
     expect(result.res.contentType).toBe("music");
     expect(progressStages).toEqual(["download", "completed"]);
     expect(runCount).toBe(2);
+    expect(downloadTimeoutMs).toBe(20 * 60 * 1000);
     if (result.res.contentType === "music") {
       expect(result.res.variants[0]?.downloaded).toBe(true);
       if (result.res.variants[0]?.downloaded) {

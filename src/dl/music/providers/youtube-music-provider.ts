@@ -94,6 +94,10 @@ const YT_DLP_CONCURRENT_FRAGMENTS = "4";
 const MP3_TARGET_BITRATES_KBPS = [320, 256, 224, 192, 160, 128, 112, 96, 80, 64, 48, 32];
 const MP3_V0_ESTIMATED_BITRATE_KBPS = 280;
 const MP3_CONTAINER_OVERHEAD_BYTES = 512 * 1024;
+const YT_DLP_SEARCH_TIMEOUT_MS = 30_000;
+const YT_DLP_METADATA_TIMEOUT_MS = 30_000;
+const YT_DLP_DOWNLOAD_TIMEOUT_MS = 20 * 60 * 1000;
+const THUMBNAIL_FETCH_TIMEOUT_MS = 15_000;
 
 function estimateFormatSizeBytes(
   format: DownloadFormat,
@@ -312,13 +316,19 @@ async function fetchMetadata(
   runCommandImpl: YoutubeMusicProviderDeps["runCommand"],
   url: string,
 ): Promise<DownloadMetadata> {
-  const { exitCode, stdout, stderr } = await runCommandImpl([
-    YT_DLP_BINARY,
-    ...YT_DLP_COMMON_ARGS,
-    "--no-playlist",
-    "--dump-single-json",
-    url,
-  ]);
+  const { exitCode, stdout, stderr } = await runCommandImpl(
+    [
+      YT_DLP_BINARY,
+      ...YT_DLP_COMMON_ARGS,
+      "--no-playlist",
+      "--dump-single-json",
+      url,
+    ],
+    {
+      timeoutMs: YT_DLP_METADATA_TIMEOUT_MS,
+      timeoutLabel: "yt-dlp music metadata fetch",
+    },
+  );
 
   if (exitCode !== 0) {
     throw new DownloadError(stderr.trim() || "yt-dlp metadata fetch failed");
@@ -398,7 +408,12 @@ async function createSquareThumbnail(
     return undefined;
   }
 
-  const response = await fetch(thumbnailUrl).catch(() => undefined);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), THUMBNAIL_FETCH_TIMEOUT_MS);
+  const response = await fetch(thumbnailUrl, {
+    signal: controller.signal,
+  }).catch(() => undefined);
+  clearTimeout(timeoutId);
   if (!response?.ok) {
     return undefined;
   }
@@ -467,7 +482,10 @@ export class YoutubeMusicProvider implements MusicProvider {
       ...(this.provider.searchMode === "music" ? ["--playlist-items", `1:${limit}`] : []),
       searchInput,
     ];
-    const { exitCode, stdout, stderr } = await this.deps.runCommand(command);
+    const { exitCode, stdout, stderr } = await this.deps.runCommand(command, {
+      timeoutMs: YT_DLP_SEARCH_TIMEOUT_MS,
+      timeoutLabel: "yt-dlp music search",
+    });
 
     if (exitCode !== 0) {
       throw new DownloadError(stderr.trim() || "yt-dlp music search failed");
@@ -523,6 +541,8 @@ export class YoutubeMusicProvider implements MusicProvider {
         onStderrLine: async (line) => {
           await emitProgressFromYtDlpLine(line, options?.onProgress);
         },
+        timeoutMs: YT_DLP_DOWNLOAD_TIMEOUT_MS,
+        timeoutLabel: "yt-dlp music download",
       },
     );
 
