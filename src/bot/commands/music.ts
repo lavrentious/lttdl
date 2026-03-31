@@ -9,6 +9,11 @@ import {
 } from "grammy";
 import { finishUserJob, tryStartUserJob } from "src/bot/active-job-limiter";
 import {
+  checkUserJobRateLimit,
+  formatUserJobRateLimitMessage,
+  recordUserJobStart,
+} from "src/bot/user-job-rate-limiter";
+import {
   downloadMusicResult,
   searchMusic,
   type MusicSearchResult,
@@ -429,12 +434,23 @@ async function runMusicSearch(
 
   cleanupExpiredSearches();
 
+  const rateLimitResult = checkUserJobRateLimit(ctx.from.id);
+  if (!rateLimitResult.allowed) {
+    logger.warn(
+      `user ${ctx.from.id} hit ${rateLimitResult.window} heavy-job rate limit; retryAfterMs=${rateLimitResult.retryAfterMs}`,
+    );
+    await ctx.reply(formatUserJobRateLimitMessage(rateLimitResult));
+    return;
+  }
+
   if (!tryStartUserJob(ctx.from.id, MAX_ACTIVE_JOBS_PER_USER)) {
     await ctx.reply(
       `you already have ${MAX_ACTIVE_JOBS_PER_USER} active jobs. wait for one to finish before starting another.`,
     );
     return;
   }
+
+  recordUserJobStart(ctx.from.id);
 
   const loadingMessage = await ctx.reply("searching music...");
   const userSettings = getUserSettings(ctx.from.id);
@@ -544,9 +560,17 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
     return;
   }
 
-  await ctx.answerCallbackQuery({
-    text: `downloading ${truncateLabel(selected.title, 40)}`,
-  });
+  const rateLimitResult = checkUserJobRateLimit(ctx.from.id);
+  if (!rateLimitResult.allowed) {
+    logger.warn(
+      `user ${ctx.from.id} hit ${rateLimitResult.window} heavy-job rate limit; retryAfterMs=${rateLimitResult.retryAfterMs}`,
+    );
+    await ctx.answerCallbackQuery({
+      text: formatUserJobRateLimitMessage(rateLimitResult),
+      show_alert: true,
+    });
+    return;
+  }
 
   if (!tryStartUserJob(ctx.from.id, MAX_ACTIVE_JOBS_PER_USER)) {
     await ctx.reply(
@@ -554,6 +578,12 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
     );
     return;
   }
+
+  recordUserJobStart(ctx.from.id);
+
+  await ctx.answerCallbackQuery({
+    text: `downloading ${truncateLabel(selected.title, 40)}`,
+  });
 
   pendingSearches.delete(data.token);
   await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch();

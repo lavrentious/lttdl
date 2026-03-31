@@ -13,6 +13,11 @@ import {
 } from "src/dl/downloader";
 import { finishUserJob, tryStartUserJob } from "src/bot/active-job-limiter";
 import {
+  checkUserJobRateLimit,
+  formatUserJobRateLimitMessage,
+  recordUserJobStart,
+} from "src/bot/user-job-rate-limiter";
+import {
   buildGalleryLinksMessages,
   buildImageLinksMessages,
   buildSingleMediaLinksMessage,
@@ -274,11 +279,26 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     return;
   }
 
+  if (ctx.from) {
+    const rateLimitResult = checkUserJobRateLimit(ctx.from.id);
+    if (!rateLimitResult.allowed) {
+      logger.warn(
+        `user ${ctx.from.id} hit ${rateLimitResult.window} heavy-job rate limit; retryAfterMs=${rateLimitResult.retryAfterMs}`,
+      );
+      await ctx.reply(formatUserJobRateLimitMessage(rateLimitResult));
+      return;
+    }
+  }
+
   if (ctx.from && !tryStartUserJob(ctx.from.id, MAX_ACTIVE_JOBS_PER_USER)) {
     await ctx.reply(
       `you already have ${MAX_ACTIVE_JOBS_PER_USER} active jobs. wait for one to finish before starting another.`,
     );
     return;
+  }
+
+  if (ctx.from) {
+    recordUserJobStart(ctx.from.id);
   }
 
   const msg1 = await ctx.reply(`downloading...`);
