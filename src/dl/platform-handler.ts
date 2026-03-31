@@ -16,7 +16,11 @@ export interface PlatformHandler {
 
   canHandle(url: string): boolean;
 
-  resolve?(url: string, context?: ResolveContext): Promise<ResolvedContent>;
+  resolve?(
+    url: string,
+    context?: ResolveContext,
+    options?: DownloadOptions,
+  ): Promise<ResolvedContent>;
 
   download?(
     url: string,

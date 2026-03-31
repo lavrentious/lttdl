@@ -1,5 +1,5 @@
 import { config } from "src/utils/env-validation";
-import { mapWithConcurrency } from "src/utils/async";
+import { mapWithConcurrency, throwIfAborted } from "src/utils/async";
 import { DownloadError, toDownloadError } from "src/errors/download-error";
 import { AssetDownloader } from "./asset-downloader";
 import { AssetProcessor } from "./asset-processor";
@@ -194,6 +194,7 @@ async function buildVideoResult(
   strategy: NonNullable<DownloadOptions["strategy"]>,
   maxFileSize?: number,
   onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+  signal?: AbortSignal,
 ): Promise<Extract<DownloadResult, { contentType: "video" }>> {
   const entry = resolved.entries[0];
   if (!entry) {
@@ -218,12 +219,15 @@ async function buildVideoResult(
               tempDir,
               maxFileSize,
               progressMapper(index),
+              signal,
             ),
+          { signal },
         ),
       ),
     );
   } else {
     for (const [index, variant] of entry.variants.entries()) {
+      throwIfAborted(signal);
       const downloaded = await assetProcessor.downloadVideoVariant(
         variant,
         tempDir,
@@ -234,6 +238,7 @@ async function buildVideoResult(
           message: "downloading video",
           onProgress,
         }),
+        signal,
       );
       variants.push(downloaded);
       if (
@@ -256,6 +261,7 @@ async function buildImageResult(
   tempDir: string,
   strategy: NonNullable<DownloadOptions["strategy"]>,
   onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+  signal?: AbortSignal,
 ): Promise<Extract<DownloadResult, { contentType: "image" }>> {
   const variants = await mapWithConcurrency(
     resolved.entries,
@@ -267,13 +273,15 @@ async function buildImageResult(
             entry.variants,
             MAX_DOWNLOAD_CONCURRENCY,
             async (variant) =>
-              await assetProcessor.downloadImageVariant(variant, tempDir),
+              await assetProcessor.downloadImageVariant(variant, tempDir, undefined, signal),
+            { signal },
           ),
         );
       }
 
       const attempted: PhotoVariant[] = [];
       for (const variant of entry.variants) {
+        throwIfAborted(signal);
         const total = Math.max(resolved.entries.length, 1);
         const downloaded = await assetProcessor.downloadImageVariant(
           variant,
@@ -284,6 +292,7 @@ async function buildImageResult(
             message: `downloading image ${entryIndex + 1}/${resolved.entries.length}`,
             onProgress,
           }),
+          signal,
         );
         attempted.push(downloaded);
         if (downloaded.downloaded) {
@@ -300,6 +309,7 @@ async function buildImageResult(
             } satisfies PhotoVariant,
           ];
     },
+    { signal },
   );
 
   return {
@@ -314,6 +324,7 @@ async function buildAudioResult(
   strategy: NonNullable<DownloadOptions["strategy"]>,
   maxFileSize?: number,
   onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+  signal?: AbortSignal,
 ): Promise<Extract<DownloadResult, { contentType: "music" }>> {
   const entry = resolved.entries[0];
   if (!entry) {
@@ -338,11 +349,14 @@ async function buildAudioResult(
             resolved.title,
             maxFileSize,
             progressMapper(index),
+            signal,
           ),
+        { signal },
       )),
     );
   } else {
     for (const [index, variant] of entry.variants.entries()) {
+      throwIfAborted(signal);
       const downloaded = await assetProcessor.downloadAudioVariant(
         variant,
         tempDir,
@@ -354,6 +368,7 @@ async function buildAudioResult(
           message: "downloading audio",
           onProgress,
         }),
+        signal,
       );
       variants.push(downloaded);
       if (
@@ -378,6 +393,7 @@ export async function downloadContent(
   router: DownloadRouter = defaultRouter,
 ): Promise<DownloadExecutionResult> {
   try {
+    throwIfAborted(options.signal);
     const handler = router.resolveHandler(url);
     if (handler.download) {
       return await handler.download(url, context, options);
@@ -387,7 +403,7 @@ export async function downloadContent(
       throw new DownloadError(`platform ${handler.platform} is not implemented`);
     }
 
-    const resolved = await handler.resolve(url, context);
+    const resolved = await handler.resolve(url, context, options);
     const tempDir = options.tempDir || config.get("TEMP_DIR");
     const strategy = options.strategy || "all";
     const maxFileSize = options.maxFileSize;
@@ -401,9 +417,10 @@ export async function downloadContent(
         strategy,
         maxFileSize,
         onProgress,
+        options.signal,
       );
     } else if (resolved.kind === "image") {
-      res = await buildImageResult(resolved, tempDir, strategy, onProgress);
+      res = await buildImageResult(resolved, tempDir, strategy, onProgress, options.signal);
     } else {
       res = await buildAudioResult(
         resolved,
@@ -411,6 +428,7 @@ export async function downloadContent(
         strategy,
         maxFileSize,
         onProgress,
+        options.signal,
       );
     }
 

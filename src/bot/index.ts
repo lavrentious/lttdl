@@ -3,6 +3,7 @@ import { Bot } from "grammy";
 import { initUserSettingsDb } from "src/settings/user-settings";
 import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
+import { cancelCallbackQuery } from "./commands/cancel";
 import { downloadCommand } from "./commands/download";
 import { musicCallbackQuery, musicCommand } from "./commands/music";
 import { settingsCallbackQuery, settingsCommand } from "./commands/settings";
@@ -59,6 +60,7 @@ function createBot() {
   );
   bot.command("settings", settingsCommand);
   bot.command("music", musicCommand);
+  bot.callbackQuery(/^cancel:/, cancelCallbackQuery);
   bot.callbackQuery(/^settings:/, settingsCallbackQuery);
   bot.callbackQuery(/^music:/, musicCallbackQuery);
   bot.on("message", downloadCommand);

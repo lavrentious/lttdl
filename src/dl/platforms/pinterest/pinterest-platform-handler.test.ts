@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { OperationCancelledError } from "src/errors/download-error";
 import { PinterestPlatformHandler } from "./pinterest-platform-handler";
 
 function buildImageItem(id: number) {
@@ -175,5 +176,70 @@ describe("PinterestPlatformHandler", () => {
     await expect(
       handler.download!("https://pin.it/example", {}, {}),
     ).rejects.toThrow("pinterest-dl is not installed");
+  });
+
+  test("cleans up already-downloaded items when cancelled mid-board", async () => {
+    const cleaned: string[] = [];
+    let downloadCount = 0;
+    const handler = new PinterestPlatformHandler({
+      which: () => "/usr/bin/pinterest-dl",
+      runCommand: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify({
+          command: "scrape",
+          results: [
+            {
+              input: "https://www.pinterest.com/board/example",
+              items: [buildImageItem(1), buildImageItem(2), buildImageItem(3)],
+            },
+          ],
+        }),
+        stderr: "",
+      }),
+      downloadImageItem: async (item, _tempDir, _onProgress, signal) => {
+        downloadCount += 1;
+        if (downloadCount === 1) {
+          controller.abort(new OperationCancelledError("operation cancelled"));
+        }
+        if (downloadCount === 2) {
+          throw signal?.reason instanceof Error
+            ? signal.reason
+            : new OperationCancelledError("operation cancelled");
+        }
+
+        return {
+          downloaded: true,
+          downloadUrl: item.origin,
+          path: `/tmp/${item.id}.jpg`,
+          size: 1,
+          payload: {
+            resolution: {
+              width: 800,
+              height: 1200,
+            },
+          },
+          cleanup: () => {
+            cleaned.push(String(item.id));
+          },
+        };
+      },
+      downloadVideoItem: async () => ({
+        downloaded: false,
+        downloadUrl: "https://example.com",
+      }),
+    });
+    const controller = new AbortController();
+
+    await expect(
+      handler.download!(
+        "https://www.pinterest.com/board/example",
+        {},
+        {
+          tempDir: "/tmp",
+          signal: controller.signal,
+        },
+      ),
+    ).rejects.toThrow("operation cancelled");
+    expect(cleaned).toEqual(["1"]);
   });
 });

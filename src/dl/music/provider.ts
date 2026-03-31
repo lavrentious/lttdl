@@ -9,10 +9,14 @@ export type MusicSearchResult = {
   durationSeconds?: number;
 };
 
+export type MusicSearchOptions = {
+  signal?: AbortSignal;
+};
+
 export interface MusicProvider {
   readonly id: MusicSearchProviderId;
 
-  search(query: string, limit: number): Promise<MusicSearchResult[]>;
+  search(query: string, limit: number, options?: MusicSearchOptions): Promise<MusicSearchResult[]>;
 
   download(
     result: MusicSearchResult,

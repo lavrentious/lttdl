@@ -1,7 +1,8 @@
 import { randomUUIDv7 } from "bun";
-import { createWriteStream, mkdirSync } from "fs";
+import { createWriteStream, existsSync, mkdirSync, rmSync } from "fs";
+import { OperationCancelledError } from "src/errors/download-error";
 import path from "path";
-import { retryAsync } from "src/utils/async";
+import { retryAsync, throwIfAborted } from "src/utils/async";
 import { config } from "src/utils/env-validation";
 import type { DownloadProgress } from "./types";
 
@@ -47,9 +48,18 @@ function formatEta(totalSeconds: number): string | undefined {
 async function fetchWithTimeout(
   url: string,
   timeoutMs: number,
+  signal?: AbortSignal,
   init?: RequestInit,
 ): Promise<Response> {
   const controller = new AbortController();
+  const onAbort = () => {
+    controller.abort(
+      signal?.reason instanceof Error
+        ? signal.reason
+        : new OperationCancelledError("operation cancelled"),
+    );
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
   const timeoutId = setTimeout(() => {
     controller.abort(new Error(`fetch timed out after ${timeoutMs}ms`));
   }, timeoutMs);
@@ -61,6 +71,7 @@ async function fetchWithTimeout(
     });
   } finally {
     clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -82,13 +93,14 @@ export function isRetryableNetworkError(error: unknown): boolean {
 }
 
 export class AssetDownloader {
-  async getRemoteContentLength(url: string): Promise<number> {
+  async getRemoteContentLength(url: string, signal?: AbortSignal): Promise<number> {
     const fetchInfoTimeoutMs = config.get("NETWORK_FETCH_INFO_TIMEOUT_MS");
     const fetchInfoRetries = config.get("NETWORK_FETCH_INFO_RETRIES");
     const retryDelayMs = config.get("NETWORK_RETRY_DELAY_MS");
     return await retryAsync(
       async () => {
-        const res = await fetchWithTimeout(url, fetchInfoTimeoutMs, {
+        throwIfAborted(signal);
+        const res = await fetchWithTimeout(url, fetchInfoTimeoutMs, signal, {
           method: "HEAD",
         });
         if (!res.ok) {
@@ -101,6 +113,7 @@ export class AssetDownloader {
         retries: fetchInfoRetries,
         delayMs: retryDelayMs,
         shouldRetry: isRetryableNetworkError,
+        signal,
       },
     );
   }
@@ -110,6 +123,7 @@ export class AssetDownloader {
     dir?: string,
     name?: string,
     onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+    signal?: AbortSignal,
   ): Promise<string> {
     const resolvedDir = dir || config.get("TEMP_DIR");
     const resolvedName = name || randomUUIDv7();
@@ -120,8 +134,17 @@ export class AssetDownloader {
     mkdirSync(resolvedDir, { recursive: true });
     await retryAsync(
       async () => {
+        throwIfAborted(signal);
         const controller = new AbortController();
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        const onAbort = () => {
+          controller.abort(
+            signal?.reason instanceof Error
+              ? signal.reason
+              : new OperationCancelledError("operation cancelled"),
+          );
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
         const resetTimeout = (phase: string) => {
           if (timeoutId) {
             clearTimeout(timeoutId);
@@ -156,7 +179,7 @@ export class AssetDownloader {
         const totalBytes =
           totalBytesFromGet > 0
             ? totalBytesFromGet
-            : await this.getRemoteContentLength(url).catch(() => 0);
+            : await this.getRemoteContentLength(url, signal).catch(() => 0);
         const reader = res.body.getReader();
         const output = createWriteStream(outputPath, { flags: "w" });
         let downloadedBytes = 0;
@@ -165,6 +188,7 @@ export class AssetDownloader {
 
         try {
           while (true) {
+            throwIfAborted(signal);
             resetTimeout("response stream");
             const { done, value } = await reader.read();
             if (done) {
@@ -206,6 +230,7 @@ export class AssetDownloader {
           if (timeoutId) {
             clearTimeout(timeoutId);
           }
+          signal?.removeEventListener("abort", onAbort);
           output.end();
           await new Promise<void>((resolve, reject) => {
             output.once("close", resolve);
@@ -228,8 +253,14 @@ export class AssetDownloader {
         retries: fileDownloadRetries,
         delayMs: retryDelayMs,
         shouldRetry: isRetryableNetworkError,
+        signal,
       },
-    );
+    ).catch((error) => {
+      if (existsSync(outputPath)) {
+        rmSync(outputPath, { force: true });
+      }
+      throw error;
+    });
 
     return outputPath;
   }

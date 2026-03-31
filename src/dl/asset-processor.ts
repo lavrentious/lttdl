@@ -1,4 +1,5 @@
 import { randomUUIDv7 } from "bun";
+import { isCancelledError } from "src/errors/download-error";
 import { getImageResolution, recodeImageToJpeg } from "src/utils/image";
 import { logger } from "src/utils/logger";
 import {
@@ -26,6 +27,7 @@ export class AssetProcessor {
     tempDir: string,
     maxFileSize?: number,
     onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+    signal?: AbortSignal,
   ): Promise<VideoVariant> {
     logger.debug(`downloading video from ${variant.url}...`);
     let downloadedPath: string | null = null;
@@ -33,7 +35,7 @@ export class AssetProcessor {
     try {
       if (maxFileSize !== undefined) {
         const remoteSize = await this.downloader
-          .getRemoteContentLength(variant.url)
+          .getRemoteContentLength(variant.url, signal)
           .catch(() => 0);
         if (remoteSize > maxFileSize) {
           logger.debug(
@@ -64,6 +66,7 @@ export class AssetProcessor {
         tempDir,
         randomUUIDv7(),
         onProgress,
+        signal,
       );
       finalPath = `${downloadedPath}.mp4`;
       if (await isMp4File(downloadedPath).catch(() => false)) {
@@ -91,7 +94,16 @@ export class AssetProcessor {
           Bun.file(mp4Path).delete().catch();
         },
       } satisfies VideoVariant;
-    } catch {
+    } catch (error) {
+      if (isCancelledError(error)) {
+        if (downloadedPath) {
+          Bun.file(downloadedPath).delete().catch();
+        }
+        if (finalPath) {
+          Bun.file(finalPath).delete().catch();
+        }
+        throw error;
+      }
       if (downloadedPath) {
         Bun.file(downloadedPath).delete().catch();
       }
@@ -110,12 +122,13 @@ export class AssetProcessor {
     variant: ResolvedVariant,
     tempDir: string,
     onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+    signal?: AbortSignal,
   ): Promise<PhotoVariant> {
     logger.debug(`downloading image from ${variant.url}...`);
     let path: string | null = null;
     let recodedPath: string | null = null;
     try {
-      path = await this.downloader.downloadFile(variant.url, tempDir, undefined, onProgress);
+      path = await this.downloader.downloadFile(variant.url, tempDir, undefined, onProgress, signal);
       recodedPath = `${path}.jpg`;
       const downloadedPath = path;
       const finalPath = recodedPath;
@@ -134,7 +147,16 @@ export class AssetProcessor {
           Bun.file(finalPath).delete().catch();
         },
       } satisfies PhotoVariant;
-    } catch {
+    } catch (error) {
+      if (isCancelledError(error)) {
+        if (path) {
+          Bun.file(path).delete().catch();
+        }
+        if (recodedPath) {
+          Bun.file(recodedPath).delete().catch();
+        }
+        throw error;
+      }
       if (path) {
         Bun.file(path).delete().catch();
       }
@@ -155,13 +177,14 @@ export class AssetProcessor {
     contentName: string | null,
     maxFileSize?: number,
     onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+    signal?: AbortSignal,
   ): Promise<MusicVariant> {
     logger.debug(`downloading audio from ${variant.url}...`);
     let path: string | null = null;
     try {
       if (maxFileSize !== undefined) {
         const remoteSize = await this.downloader
-          .getRemoteContentLength(variant.url)
+          .getRemoteContentLength(variant.url, signal)
           .catch(() => 0);
         if (remoteSize > maxFileSize) {
           logger.debug(
@@ -174,7 +197,7 @@ export class AssetProcessor {
         }
       }
 
-      path = await this.downloader.downloadFile(variant.url, tempDir, undefined, onProgress);
+      path = await this.downloader.downloadFile(variant.url, tempDir, undefined, onProgress, signal);
       const downloadedPath = path;
 
       const durationSeconds = await getAudioDuration(downloadedPath).catch(() => undefined);
@@ -192,7 +215,13 @@ export class AssetProcessor {
           Bun.file(downloadedPath).delete().catch();
         },
       } satisfies MusicVariant;
-    } catch {
+    } catch (error) {
+      if (isCancelledError(error)) {
+        if (path) {
+          Bun.file(path).delete().catch();
+        }
+        throw error;
+      }
       if (path) {
         Bun.file(path).delete().catch();
       }

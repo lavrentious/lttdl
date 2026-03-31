@@ -1,10 +1,14 @@
 import { randomUUIDv7 } from "bun";
 import { existsSync, rmSync } from "fs";
 import path from "path";
-import { DownloadError } from "src/errors/download-error";
+import {
+  DownloadError,
+  OperationCancelledError,
+} from "src/errors/download-error";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
 import { isLikelyOversizeVideo } from "src/dl/size-guard";
+import { throwIfAborted } from "src/utils/async";
 import { getVideoMetadata } from "src/utils/video";
 import { AssetDownloader } from "../../asset-downloader";
 import { AssetProcessor } from "../../asset-processor";
@@ -61,6 +65,7 @@ type CommandResult = {
 type CommandHooks = {
   onStdoutLine?: (line: string) => void | Promise<void>;
   onStderrLine?: (line: string) => void | Promise<void>;
+  signal?: AbortSignal;
 };
 
 type PinterestHandlerDeps = {
@@ -70,12 +75,14 @@ type PinterestHandlerDeps = {
     item: PinterestItem,
     tempDir: string,
     onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+    signal?: AbortSignal,
   ) => Promise<PhotoVariant>;
   downloadVideoItem: (
     item: PinterestItem,
     tempDir: string,
     maxFileSize?: number,
     onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+    signal?: AbortSignal,
   ) => Promise<VideoVariant>;
 };
 
@@ -129,29 +136,51 @@ async function readStream(
 
 async function runCommand(cmd: string[], hooks: CommandHooks = {}): Promise<CommandResult> {
   logger.debug(`running command: ${cmd.join(" ")}`);
+  const signal = hooks.signal;
   const spawned = Bun.spawn({
     cmd,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [exitCode, stdout, stderr] = await Promise.all([
+  let abortHandler: (() => void) | null = null;
+  const execution = Promise.all([
     spawned.exited,
     readStream(spawned.stdout, hooks.onStdoutLine),
     readStream(spawned.stderr, hooks.onStderrLine),
   ]);
+  const abortPromise = signal
+    ? new Promise<never>((_, reject) => {
+        abortHandler = () => {
+          try {
+            spawned.kill();
+          } catch {}
+          reject(
+            signal.reason instanceof Error
+              ? signal.reason
+              : new OperationCancelledError("operation cancelled"),
+          );
+        };
+        signal.addEventListener("abort", abortHandler, { once: true });
+      })
+    : null;
 
-  return {
-    exitCode,
-    stdout,
-    stderr,
-  };
+  const [exitCode, stdout, stderr] = await (abortPromise
+    ? Promise.race([execution, abortPromise])
+    : execution);
+
+  if (signal && abortHandler) {
+    signal.removeEventListener("abort", abortHandler);
+  }
+
+  return { exitCode, stdout, stderr };
 }
 
 async function downloadImageItem(
   item: PinterestItem,
   tempDir: string,
   onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+  signal?: AbortSignal,
 ): Promise<PhotoVariant> {
   const assetProcessor = new AssetProcessor(new AssetDownloader());
   const variant = await assetProcessor.downloadImageVariant(
@@ -163,6 +192,7 @@ async function downloadImageItem(
     } satisfies ResolvedVariant,
     tempDir,
     onProgress,
+    signal,
   );
 
   return {
@@ -176,6 +206,7 @@ async function downloadVideoItem(
   tempDir: string,
   _maxFileSize?: number,
   onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+  signal?: AbortSignal,
 ): Promise<VideoVariant> {
   const videoUrl = item.media_stream?.video?.url;
   if (!videoUrl) {
@@ -222,6 +253,7 @@ async function downloadVideoItem(
     stage: "postprocess",
     message: `downloading video stream for ${item.origin}`,
   });
+  throwIfAborted(signal);
   const { exitCode, stderr } = await runCommand([
     ffmpegPath,
     "-y",
@@ -234,6 +266,7 @@ async function downloadVideoItem(
     "copy",
     outputPath,
   ], {
+    signal,
     onStderrLine: async (line) => {
       const [key, rawValue = ""] = line.split("=", 2);
       const value = rawValue.trim();
@@ -351,6 +384,16 @@ function classifyItem(item: PinterestItem): "image" | "video" {
   return item.media_stream?.video?.url ? "video" : "image";
 }
 
+function cleanupEntries(entries: GalleryEntry[]) {
+  for (const entry of entries) {
+    for (const variant of entry.variants) {
+      try {
+        variant.cleanup?.();
+      } catch {}
+    }
+  }
+}
+
 export class PinterestPlatformHandler implements PlatformHandler {
   readonly platform = "pinterest" as const;
 
@@ -395,7 +438,9 @@ export class PinterestPlatformHandler implements PlatformHandler {
       url,
       "--video",
       "--json",
-    ]);
+    ], {
+      signal: options?.signal,
+    });
 
     if (exitCode !== 0) {
       logger.error(
@@ -418,58 +463,72 @@ export class PinterestPlatformHandler implements PlatformHandler {
     }
 
     const entries: GalleryEntry[] = [];
-    for (const [index, item] of limitedItems.entries()) {
-      await options?.onProgress?.({
-        stage: "batch",
-        current: index,
-        total: limitedItems.length,
-        message: `processing pinterest item ${index + 1}/${limitedItems.length}`,
-      });
+    try {
+      for (const [index, item] of limitedItems.entries()) {
+        await options?.onProgress?.({
+          stage: "batch",
+          current: index,
+          total: limitedItems.length,
+          message: `processing pinterest item ${index + 1}/${limitedItems.length}`,
+        });
+        throwIfAborted(options?.signal);
 
-      const perItemProgress = async (progress: DownloadProgress) => {
-        if (!options?.onProgress) {
-          return;
-        }
+        const perItemProgress = async (progress: DownloadProgress) => {
+          if (!options?.onProgress) {
+            return;
+          }
 
-        if (progress.stage === "download") {
-          const aggregatePercent =
-            typeof progress.percent === "number"
-              ? ((index + progress.percent / 100) / Math.max(limitedItems.length, 1)) * 100
-              : undefined;
+          if (progress.stage === "download") {
+            const aggregatePercent =
+              typeof progress.percent === "number"
+                ? ((index + progress.percent / 100) / Math.max(limitedItems.length, 1)) * 100
+                : undefined;
 
-          await options.onProgress({
-            stage: "download",
-            message: `downloading pinterest item ${index + 1}/${limitedItems.length}`,
-            percent: aggregatePercent,
-            bytesDownloaded: progress.bytesDownloaded,
-            totalBytes: progress.totalBytes,
-            speed: progress.speed,
-            eta: progress.eta,
+            await options.onProgress({
+              stage: "download",
+              message: `downloading pinterest item ${index + 1}/${limitedItems.length}`,
+              percent: aggregatePercent,
+              bytesDownloaded: progress.bytesDownloaded,
+              totalBytes: progress.totalBytes,
+              speed: progress.speed,
+              eta: progress.eta,
+            });
+            return;
+          }
+
+          await options.onProgress(progress);
+        };
+
+        if (classifyItem(item) === "video") {
+          entries.push({
+            kind: "video",
+            variants: [
+              await this.deps.downloadVideoItem(
+                item,
+                tempDir,
+                options?.maxFileSize,
+                perItemProgress,
+                options?.signal,
+              ),
+            ],
           });
-          return;
+        } else {
+          entries.push({
+            kind: "image",
+            variants: [
+              await this.deps.downloadImageItem(
+                item,
+                tempDir,
+                perItemProgress,
+                options?.signal,
+              ),
+            ],
+          });
         }
-
-        await options.onProgress(progress);
-      };
-
-      if (classifyItem(item) === "video") {
-        entries.push({
-          kind: "video",
-          variants: [
-            await this.deps.downloadVideoItem(
-              item,
-              tempDir,
-              options?.maxFileSize,
-              perItemProgress,
-            ),
-          ],
-        });
-      } else {
-        entries.push({
-          kind: "image",
-          variants: [await this.deps.downloadImageItem(item, tempDir, perItemProgress)],
-        });
       }
+    } catch (error) {
+      cleanupEntries(entries);
+      throw error;
     }
 
     await options?.onProgress?.({
@@ -478,11 +537,7 @@ export class PinterestPlatformHandler implements PlatformHandler {
     });
 
     const cleanup = () => {
-      for (const entry of entries) {
-        for (const variant of entry.variants) {
-          variant.cleanup?.();
-        }
-      }
+      cleanupEntries(entries);
     };
 
     if (entries.length === 1) {

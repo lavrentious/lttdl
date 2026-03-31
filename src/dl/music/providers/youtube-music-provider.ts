@@ -1,7 +1,11 @@
 import { randomUUIDv7 } from "bun";
 import { existsSync, rmSync } from "fs";
 import path from "path";
-import { DownloadError } from "src/errors/download-error";
+import {
+  DownloadError,
+  isCancelledError,
+  OperationCancelledError,
+} from "src/errors/download-error";
 import { formatSizeMegabytes } from "src/dl/size-guard";
 import { config } from "src/utils/env-validation";
 import { createCenteredSquareJpeg } from "src/utils/image";
@@ -310,6 +314,7 @@ function chooseAudioDownloadFormat(
 async function fetchMetadata(
   runCommandImpl: YoutubeMusicProviderDeps["runCommand"],
   url: string,
+  signal?: AbortSignal,
 ): Promise<DownloadMetadata> {
   const { exitCode, stdout, stderr } = await runCommandImpl(
     buildYtDlpArgs(
@@ -320,6 +325,7 @@ async function fetchMetadata(
     {
       timeoutMs: config.get("YT_DLP_MUSIC_METADATA_TIMEOUT_MS"),
       timeoutLabel: "yt-dlp music metadata fetch",
+      signal,
     },
   );
 
@@ -396,12 +402,21 @@ function ensureMp3Filename(name: string | undefined): string {
 async function createSquareThumbnail(
   thumbnailUrl: string | undefined,
   outputPath: string,
+  signal?: AbortSignal,
 ): Promise<string | undefined> {
   if (!thumbnailUrl) {
     return undefined;
   }
 
   const controller = new AbortController();
+  const onAbort = () => {
+    controller.abort(
+      signal?.reason instanceof Error
+        ? signal.reason
+        : new OperationCancelledError("operation cancelled"),
+    );
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
   const timeoutId = setTimeout(
     () => controller.abort(),
     config.get("YT_DLP_THUMBNAIL_FETCH_TIMEOUT_MS"),
@@ -410,12 +425,23 @@ async function createSquareThumbnail(
     signal: controller.signal,
   }).catch(() => undefined);
   clearTimeout(timeoutId);
+  signal?.removeEventListener("abort", onAbort);
   if (!response?.ok) {
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new OperationCancelledError("operation cancelled");
+    }
     return undefined;
   }
 
   const body = await response.arrayBuffer().catch(() => undefined);
   if (!body) {
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new OperationCancelledError("operation cancelled");
+    }
     return undefined;
   }
 
@@ -461,7 +487,11 @@ export class YoutubeMusicProvider implements MusicProvider {
     return this.provider.id;
   }
 
-  async search(query: string, limit: number): Promise<MusicSearchResult[]> {
+  async search(
+    query: string,
+    limit: number,
+    options?: { signal?: AbortSignal },
+  ): Promise<MusicSearchResult[]> {
     if (!this.deps.which(YT_DLP_BINARY)) {
       throw new DownloadError("yt-dlp is not installed");
     }
@@ -479,6 +509,7 @@ export class YoutubeMusicProvider implements MusicProvider {
     const { exitCode, stdout, stderr } = await this.deps.runCommand(command, {
       timeoutMs: config.get("YT_DLP_MUSIC_SEARCH_TIMEOUT_MS"),
       timeoutLabel: "yt-dlp music search",
+      signal: options?.signal,
     });
 
     if (exitCode !== 0) {
@@ -505,9 +536,16 @@ export class YoutubeMusicProvider implements MusicProvider {
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
-    const prefetchMetadata = await fetchMetadata(this.deps.runCommand, result.url).catch(
-      () => ({} as DownloadMetadata),
-    );
+    const prefetchMetadata = await fetchMetadata(
+      this.deps.runCommand,
+      result.url,
+      options?.signal,
+    ).catch((error) => {
+      if (isCancelledError(error)) {
+        throw error;
+      }
+      return {} as DownloadMetadata;
+    });
     const audioPlan = chooseAudioDownloadFormat(prefetchMetadata, options?.maxFileSize);
     const mp3Quality = chooseMp3AudioQuality(prefetchMetadata.duration, options?.maxFileSize);
     const { exitCode, stdout, stderr } = await this.deps.runCommand(
@@ -535,6 +573,7 @@ export class YoutubeMusicProvider implements MusicProvider {
         },
         timeoutMs: config.get("YT_DLP_MUSIC_DOWNLOAD_TIMEOUT_MS"),
         timeoutLabel: "yt-dlp music download",
+        signal: options?.signal,
       },
     );
 
@@ -550,6 +589,7 @@ export class YoutubeMusicProvider implements MusicProvider {
     const thumbnailPath = await createSquareThumbnail(
       metadata.thumbnail,
       path.join(tempDir, `${basename}.jpg`),
+      options?.signal,
     );
     const trackName = metadata.track || metadata.title || result.title;
     const performer = resolveArtistName(metadata) || result.uploader;

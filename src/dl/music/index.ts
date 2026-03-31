@@ -1,6 +1,6 @@
 import { DownloadError, toDownloadError } from "src/errors/download-error";
 import { MUSIC_PROVIDER_REGISTRY } from "./providers";
-import type { MusicSearchResult } from "./provider";
+import type { MusicSearchOptions, MusicSearchResult } from "./provider";
 import type { MusicSearchProviderId } from "./types";
 import type { DownloadExecutionResult, DownloadOptions } from "src/dl/types";
 
@@ -17,9 +17,10 @@ export async function searchMusic(
   providerId: MusicSearchProviderId,
   query: string,
   limit: number,
+  options?: MusicSearchOptions,
 ): Promise<MusicSearchResult[]> {
   try {
-    return await getProvider(providerId).search(query, limit);
+    return await getProvider(providerId).search(query, limit, options);
   } catch (error) {
     throw toDownloadError(error);
   }

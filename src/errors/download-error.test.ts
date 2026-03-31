@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { DownloadError, isTimeoutError, toDownloadError } from "./download-error";
+import {
+  DownloadError,
+  isCancelledError,
+  isTimeoutError,
+  OperationCancelledError,
+  toDownloadError,
+} from "./download-error";
 
 describe("toDownloadError", () => {
   test("preserves existing download errors", () => {
@@ -12,8 +18,14 @@ describe("toDownloadError", () => {
     expect(toDownloadError(new Error("yt-dlp music search timed out after 30000ms"))).toEqual(
       new DownloadError("timeout exceeded"),
     );
+  });
+
+  test("maps cancellation to operation cancelled", () => {
     expect(toDownloadError(new DOMException("The operation was aborted", "AbortError"))).toEqual(
-      new DownloadError("timeout exceeded"),
+      new OperationCancelledError("operation cancelled"),
+    );
+    expect(toDownloadError(new OperationCancelledError("operation cancelled"))).toEqual(
+      new OperationCancelledError("operation cancelled"),
     );
   });
 
@@ -28,5 +40,13 @@ describe("isTimeoutError", () => {
   test("recognizes timeout-shaped failures", () => {
     expect(isTimeoutError(new Error("request timeout"))).toBe(true);
     expect(isTimeoutError(new Error("request timed out"))).toBe(true);
+  });
+});
+
+describe("isCancelledError", () => {
+  test("recognizes cancellation-shaped failures", () => {
+    expect(isCancelledError(new OperationCancelledError("operation cancelled"))).toBe(true);
+    expect(isCancelledError(new Error("download cancelled by user"))).toBe(true);
+    expect(isCancelledError(new Error("request timeout"))).toBe(false);
   });
 });

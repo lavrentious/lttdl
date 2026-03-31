@@ -1,9 +1,22 @@
-import { DownloadError } from "src/errors/download-error";
+import { DownloadError, OperationCancelledError } from "src/errors/download-error";
+
+export function throwIfAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) {
+    return;
+  }
+
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new OperationCancelledError("operation cancelled");
+}
 
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   concurrency: number,
   mapper: (item: T, index: number) => Promise<R>,
+  options: {
+    signal?: AbortSignal;
+  } = {},
 ): Promise<R[]> {
   if (concurrency < 1) {
     throw new Error("concurrency must be at least 1");
@@ -14,6 +27,7 @@ export async function mapWithConcurrency<T, R>(
 
   async function worker() {
     while (true) {
+      throwIfAborted(options.signal);
       const currentIndex = nextIndex++;
       if (currentIndex >= items.length) {
         return;
@@ -36,15 +50,18 @@ export async function retryAsync<T>(
     retries,
     delayMs = 0,
     shouldRetry = () => false,
+    signal,
   }: {
     retries: number;
     delayMs?: number;
     shouldRetry?: (error: unknown, attempt: number) => boolean;
+    signal?: AbortSignal;
   },
 ): Promise<T> {
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    throwIfAborted(signal);
     try {
       return await operation(attempt);
     } catch (error) {
@@ -54,7 +71,22 @@ export async function retryAsync<T>(
       }
 
       if (delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        await new Promise<void>((resolve, reject) => {
+          const timeoutId = setTimeout(() => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+          }, delayMs);
+          const onAbort = () => {
+            clearTimeout(timeoutId);
+            signal?.removeEventListener("abort", onAbort);
+            reject(
+              signal?.reason instanceof Error
+                ? signal.reason
+                : new OperationCancelledError("operation cancelled"),
+            );
+          };
+          signal?.addEventListener("abort", onAbort, { once: true });
+        });
       }
     }
   }
@@ -66,8 +98,10 @@ export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   label: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   let timeoutId: Timer | null = null;
+  let abortHandler: (() => void) | null = null;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
@@ -75,11 +109,27 @@ export async function withTimeout<T>(
     }, timeoutMs);
   });
 
+  const abortPromise = signal
+    ? new Promise<never>((_, reject) => {
+        abortHandler = () => {
+          reject(
+            signal.reason instanceof Error
+              ? signal.reason
+              : new OperationCancelledError("operation cancelled"),
+          );
+        };
+        signal.addEventListener("abort", abortHandler, { once: true });
+      })
+    : null;
+
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    return await Promise.race([promise, timeoutPromise, ...(abortPromise ? [abortPromise] : [])]);
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId);
+    }
+    if (signal && abortHandler) {
+      signal.removeEventListener("abort", abortHandler);
     }
   }
 }

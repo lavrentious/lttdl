@@ -1,9 +1,14 @@
 import { DownloadError } from "src/errors/download-error";
-import { retryAsync, withTimeout } from "src/utils/async";
+import { retryAsync, throwIfAborted, withTimeout } from "src/utils/async";
 import { isRetryableNetworkError } from "src/dl/asset-downloader";
 import { config } from "src/utils/env-validation";
 import type { PlatformHandler, ResolveContext } from "../../platform-handler";
-import type { ContentKind, ResolvedContentEntry, ResolvedVariant } from "../../types";
+import type {
+  ContentKind,
+  DownloadOptions,
+  ResolvedContentEntry,
+  ResolvedVariant,
+} from "../../types";
 import type { TiktokProviderAdapter } from "./provider";
 import { TIKTOK_PROVIDER_REGISTRY } from "./providers";
 import {
@@ -124,6 +129,7 @@ export class TiktokPlatformHandler implements PlatformHandler {
   async resolve(
     url: string,
     context?: ResolveContext,
+    options?: DownloadOptions,
   ): Promise<TiktokResolvedContent> {
     const requestedProviders = context?.tiktokProviders?.filter(
       (provider): provider is TiktokProvider =>
@@ -137,7 +143,7 @@ export class TiktokPlatformHandler implements PlatformHandler {
       return new Provider();
     });
     const settled = await Promise.allSettled(
-      adapters.map(async (adapter) => await resolveWithRetry(adapter, url)),
+      adapters.map(async (adapter) => await resolveWithRetry(adapter, url, options?.signal)),
     );
     const results = settled.flatMap((result) =>
       result.status === "fulfilled" ? [result.value] : [],
@@ -150,21 +156,28 @@ export class TiktokPlatformHandler implements PlatformHandler {
 async function resolveWithRetry(
   adapter: TiktokProviderAdapter,
   url: string,
+  signal?: AbortSignal,
 ): Promise<TiktokProviderResult> {
   const fetchInfoTimeoutMs = config.get("NETWORK_FETCH_INFO_TIMEOUT_MS");
   const fetchInfoRetries = config.get("NETWORK_FETCH_INFO_RETRIES");
   const retryDelayMs = config.get("NETWORK_RETRY_DELAY_MS");
   return await retryAsync(
-    async () =>
-      await withTimeout(
+    async () => {
+      throwIfAborted(signal);
+      const result = await withTimeout(
         adapter.resolve(url),
         fetchInfoTimeoutMs,
         `${adapter.provider} resolve`,
-      ),
+        signal,
+      );
+      throwIfAborted(signal);
+      return result;
+    },
     {
       retries: fetchInfoRetries,
       delayMs: retryDelayMs,
       shouldRetry: isRetryableNetworkError,
+      signal,
     },
   );
 }

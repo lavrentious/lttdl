@@ -7,6 +7,13 @@ import {
 } from "grammy";
 import { finishUserJob, tryStartUserJob } from "src/bot/active-job-limiter";
 import {
+  attachOperationMessage,
+  completeTrackedOperation,
+  createTrackedOperation,
+  getCancelKeyboard,
+  isTrackedOperationCancelled,
+} from "src/bot/operation-registry";
+import {
   checkUserJobRateLimit,
   formatUserJobRateLimitMessage,
   recordUserJobStart,
@@ -18,7 +25,7 @@ import {
   type VideoVariant,
 } from "src/dl/downloader";
 import type { DownloadProgress } from "src/dl/types";
-import { toDownloadError } from "src/errors/download-error";
+import { isCancelledError, toDownloadError } from "src/errors/download-error";
 import {
   getDefaultUserSettings,
   getUserSettings,
@@ -79,6 +86,7 @@ function formatMegabytes(bytes: number): string {
 function createProgressUpdater(
   ctx: Filter<Context, "message">,
   loadingMessage: { chat: { id: number }; message_id: number },
+  operationId: string,
 ) {
   const progressUpdateIntervalMs = config.get(
     "BOT_PROGRESS_UPDATE_INTERVAL_MS",
@@ -87,6 +95,10 @@ function createProgressUpdater(
   let lastText = "downloading...";
 
   return async (progress: DownloadProgress) => {
+    if (isTrackedOperationCancelled(operationId)) {
+      return;
+    }
+
     let nextText: string;
     if (progress.stage === "status") {
       nextText = progress.message;
@@ -149,6 +161,7 @@ function createProgressUpdater(
         nextText,
         {
           parse_mode: "Markdown",
+          reply_markup: getCancelKeyboard(operationId),
         },
       )
       .catch();
@@ -310,12 +323,23 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     recordUserJobStart(ctx.from.id);
   }
 
-  const msg1 = await ctx.reply(`downloading...`);
+  const operation = ctx.from ? createTrackedOperation(ctx.from.id) : null;
+  const msg1 = await ctx.reply(`downloading...`, {
+    reply_markup: operation ? getCancelKeyboard(operation.id) : undefined,
+  });
+  if (operation) {
+    attachOperationMessage(operation.id, {
+      chatId: msg1.chat.id,
+      messageId: msg1.message_id,
+    });
+  }
   const userSettings = ctx.from
     ? getUserSettings(ctx.from.id)
     : getDefaultUserSettings();
   const downloadStrategy = userSettings.verboseOutput ? "all" : "single";
-  const progressUpdater = createProgressUpdater(ctx, msg1);
+  const progressUpdater = operation
+    ? createProgressUpdater(ctx, msg1, operation.id)
+    : undefined;
 
   try {
     const { res, cleanup } = await downloadContent(
@@ -328,8 +352,12 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         strategy: downloadStrategy,
         maxFileSize,
         onProgress: progressUpdater,
+        signal: operation?.controller.signal,
       },
     );
+    if (operation) {
+      completeTrackedOperation(operation.id);
+    }
 
     if (res.contentType === "video") {
       const uploadedFile = res.variants.find(
@@ -511,10 +539,17 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
 
     await next();
   } catch (err) {
-    logError(err);
-    const errMsg = toDownloadError(err).message;
-    ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
-    ctx.reply(`failed to download: ${errMsg}`);
+    if (operation) {
+      completeTrackedOperation(operation.id);
+    }
+    if (isCancelledError(err)) {
+      logger.info(`cancelled download ${query} for ${ctx.from?.id ?? "unknown user"}`);
+    } else {
+      logError(err);
+      const errMsg = toDownloadError(err).message;
+      ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
+      ctx.reply(`failed to download: ${errMsg}`);
+    }
     await next();
   } finally {
     if (ctx.from) {

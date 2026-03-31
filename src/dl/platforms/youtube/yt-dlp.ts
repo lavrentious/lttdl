@@ -66,6 +66,7 @@ export type YtDlpCommandHooks = {
   onStderrLine?: (line: string) => void | Promise<void>;
   timeoutMs?: number;
   timeoutLabel?: string;
+  signal?: AbortSignal;
 };
 
 export type YtDlpRunCommand = (
@@ -192,6 +193,7 @@ export async function runYtDlpCommand(
   hooks: YtDlpCommandHooks = {},
 ): Promise<YtDlpCommandResult> {
   const prepared = prepareYtDlpCommand(cmd);
+  const signal = hooks.signal;
   logger.debug(`running yt-dlp command: ${prepared.cmd.join(" ")}`);
   const process = Bun.spawn({
     cmd: prepared.cmd,
@@ -206,10 +208,27 @@ export async function runYtDlpCommand(
   ]);
 
   let timeoutId: Timer | null = null;
+  let abortHandler: (() => void) | null = null;
+  const abortPromise = signal
+    ? new Promise<never>((_, reject) => {
+        abortHandler = () => {
+          try {
+            process.kill();
+          } catch {}
+          reject(
+            signal.reason instanceof Error
+              ? signal.reason
+              : new DownloadError("operation cancelled"),
+          );
+        };
+        signal.addEventListener("abort", abortHandler, { once: true });
+      })
+    : null;
   const timedExecution =
     typeof hooks.timeoutMs === "number" && hooks.timeoutMs > 0
       ? Promise.race([
           execution,
+          ...(abortPromise ? [abortPromise] : []),
           new Promise<never>((_, reject) => {
             timeoutId = setTimeout(() => {
               try {
@@ -220,7 +239,9 @@ export async function runYtDlpCommand(
             }, hooks.timeoutMs);
           }),
         ])
-      : execution;
+      : abortPromise
+        ? Promise.race([execution, abortPromise])
+        : execution;
 
   try {
     const [exitCode, stdout, stderr] = await timedExecution;
@@ -233,6 +254,9 @@ export async function runYtDlpCommand(
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId);
+    }
+    if (signal && abortHandler) {
+      signal.removeEventListener("abort", abortHandler);
     }
     prepared.cleanup();
   }

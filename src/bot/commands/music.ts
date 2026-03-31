@@ -9,6 +9,13 @@ import {
 } from "grammy";
 import { finishUserJob, tryStartUserJob } from "src/bot/active-job-limiter";
 import {
+  attachOperationMessage,
+  completeTrackedOperation,
+  createTrackedOperation,
+  getCancelKeyboard,
+  isTrackedOperationCancelled,
+} from "src/bot/operation-registry";
+import {
   checkUserJobRateLimit,
   formatUserJobRateLimitMessage,
   recordUserJobStart,
@@ -19,7 +26,11 @@ import {
   type MusicSearchResult,
 } from "src/dl/music";
 import type { DownloadProgress, MusicVariant } from "src/dl/types";
-import { DownloadError, toDownloadError } from "src/errors/download-error";
+import {
+  DownloadError,
+  isCancelledError,
+  toDownloadError,
+} from "src/errors/download-error";
 import { getUserSettings } from "src/settings/user-settings";
 import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
@@ -129,12 +140,17 @@ function getPageResults(
 function createProgressUpdater(
   ctx: Context,
   loadingMessage: { chat: { id: number }; message_id: number },
+  operationId: string,
 ) {
   const progressUpdateIntervalMs = config.get("BOT_PROGRESS_UPDATE_INTERVAL_MS");
   let lastSentAt = 0;
   let lastText = "downloading...";
 
   return async (progress: DownloadProgress) => {
+    if (isTrackedOperationCancelled(operationId)) {
+      return;
+    }
+
     let nextText: string;
     if (progress.stage === "status") {
       nextText = progress.message;
@@ -191,6 +207,7 @@ function createProgressUpdater(
         nextText,
         {
           parse_mode: "Markdown",
+          reply_markup: getCancelKeyboard(operationId),
         },
       )
       .catch();
@@ -455,12 +472,22 @@ async function runMusicSearch(
 
   recordUserJobStart(ctx.from.id);
 
-  const loadingMessage = await ctx.reply("searching music...");
+  const operation = createTrackedOperation(ctx.from.id);
+  const loadingMessage = await ctx.reply("searching music...", {
+    reply_markup: getCancelKeyboard(operation.id),
+  });
+  attachOperationMessage(operation.id, {
+    chatId: loadingMessage.chat.id,
+    messageId: loadingMessage.message_id,
+  });
   const userSettings = getUserSettings(ctx.from.id);
   const provider = userSettings.platformPreferences.music.searchProvider;
 
   try {
-    const results = await searchMusic(provider, query, musicSearchLimit);
+    const results = await searchMusic(provider, query, musicSearchLimit, {
+      signal: operation.controller.signal,
+    });
+    completeTrackedOperation(operation.id);
     const token = randomUUIDv7();
     pendingSearches.set(token, {
       userId: ctx.from.id,
@@ -476,10 +503,15 @@ async function runMusicSearch(
       reply_markup: buildSearchKeyboard(ctx.from.id, token, results, 0),
     });
   } catch (err) {
-    logError(err);
-    deleteMessageSafe(ctx, loadingMessage);
-    const errMsg = toDownloadError(err).message;
-    await ctx.reply(`failed to search music: ${errMsg}`);
+    completeTrackedOperation(operation.id);
+    if (isCancelledError(err)) {
+      logger.info(`cancelled music search "${query}" for ${ctx.from.id}`);
+    } else {
+      logError(err);
+      deleteMessageSafe(ctx, loadingMessage);
+      const errMsg = toDownloadError(err).message;
+      await ctx.reply(`failed to search music: ${errMsg}`);
+    }
   } finally {
     finishUserJob(ctx.from.id);
   }
@@ -594,8 +626,15 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
   pendingSearches.delete(data.token);
   await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch();
 
-  const loadingMessage = await ctx.reply(`downloading ${selected.title}...`);
-  const progressUpdater = createProgressUpdater(ctx, loadingMessage);
+  const operation = createTrackedOperation(ctx.from.id);
+  const loadingMessage = await ctx.reply(`downloading ${selected.title}...`, {
+    reply_markup: getCancelKeyboard(operation.id),
+  });
+  attachOperationMessage(operation.id, {
+    chatId: loadingMessage.chat.id,
+    messageId: loadingMessage.message_id,
+  });
+  const progressUpdater = createProgressUpdater(ctx, loadingMessage, operation.id);
   const userSettings = getUserSettings(data.userId);
 
   try {
@@ -605,8 +644,10 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
       {
         maxFileSize,
         onProgress: progressUpdater,
+        signal: operation.controller.signal,
       },
     );
+    completeTrackedOperation(operation.id);
 
     if (res.contentType !== "music") {
       throw new DownloadError("music provider returned an invalid result");
@@ -622,10 +663,16 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
 
     logger.info(`sent music ${selected.url} to ${ctx.from.id}`);
   } catch (err) {
-    logError(err);
-    deleteMessageSafe(ctx, loadingMessage);
-    const errMsg = toDownloadError(err).message;
-    await ctx.reply(`failed to download: ${errMsg}`);
+    completeTrackedOperation(operation.id);
+    if (isCancelledError(err)) {
+      pendingSearches.set(data.token, pending);
+      logger.info(`cancelled music download ${selected.url} for ${ctx.from.id}`);
+    } else {
+      logError(err);
+      deleteMessageSafe(ctx, loadingMessage);
+      const errMsg = toDownloadError(err).message;
+      await ctx.reply(`failed to download: ${errMsg}`);
+    }
   } finally {
     finishUserJob(ctx.from.id);
   }

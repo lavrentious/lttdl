@@ -133,6 +133,7 @@ export type DownloadOptions = {
   tempDir?: string;
   strategy?: DownloadStrategy;
   maxFileSize?: number;
+  signal?: AbortSignal;
   onProgress?: (progress: DownloadProgress) => void | Promise<void>;
 };
 

@@ -1,10 +1,14 @@
 import { randomUUIDv7 } from "bun";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
 import path from "path";
-import { DownloadError } from "src/errors/download-error";
+import {
+  DownloadError,
+  OperationCancelledError,
+} from "src/errors/download-error";
 import { getImageResolution } from "src/utils/image";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
+import { throwIfAborted } from "src/utils/async";
 import { getVideoMetadata } from "src/utils/video";
 import type { PlatformHandler } from "../../platform-handler";
 import type {
@@ -32,6 +36,7 @@ type InstagramHandlerDeps = {
     cmd: string[],
     workdir: string,
     onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+    signal?: AbortSignal,
   ) => Promise<CommandResult>;
   getImageResolution: (filePath: string) => Promise<{ width: number; height: number }>;
   getVideoMetadata: (filePath: string) => Promise<{
@@ -45,6 +50,7 @@ async function runCommand(
   cmd: string[],
   workdir: string,
   onProgress?: (progress: DownloadProgress) => void | Promise<void>,
+  signal?: AbortSignal,
 ): Promise<CommandResult> {
   logger.debug(`running instaloader command: ${cmd.join(" ")}`);
   await onProgress?.({
@@ -58,11 +64,35 @@ async function runCommand(
     stderr: "pipe",
   });
 
-  const [exitCode, stdout, stderr] = await Promise.all([
+  let abortHandler: (() => void) | null = null;
+  const execution = Promise.all([
     process.exited,
     new Response(process.stdout).text(),
     new Response(process.stderr).text(),
   ]);
+  const abortPromise = signal
+    ? new Promise<never>((_, reject) => {
+        abortHandler = () => {
+          try {
+            process.kill();
+          } catch {}
+          reject(
+            signal.reason instanceof Error
+              ? signal.reason
+              : new OperationCancelledError("operation cancelled"),
+          );
+        };
+        signal.addEventListener("abort", abortHandler, { once: true });
+      })
+    : null;
+
+  const [exitCode, stdout, stderr] = await (abortPromise
+    ? Promise.race([execution, abortPromise])
+    : execution);
+
+  if (signal && abortHandler) {
+    signal.removeEventListener("abort", abortHandler);
+  }
 
   return { exitCode, stdout, stderr };
 }
@@ -169,6 +199,7 @@ export class InstagramPlatformHandler implements PlatformHandler {
       stage: "status",
       message: "resolving instagram media...",
     });
+    throwIfAborted(options?.signal);
 
     const { exitCode, stderr } = await this.deps.runCommand(
       [
@@ -185,6 +216,7 @@ export class InstagramPlatformHandler implements PlatformHandler {
       ],
       workdir,
       options?.onProgress,
+      options?.signal,
     );
 
     if (exitCode !== 0) {
@@ -198,6 +230,7 @@ export class InstagramPlatformHandler implements PlatformHandler {
 
     const entries: GalleryEntry[] = [];
     for (const filePath of files) {
+      throwIfAborted(options?.signal);
       const kind = classifyPath(filePath);
       if (kind === "image") {
         const resolution = await this.deps.getImageResolution(filePath);

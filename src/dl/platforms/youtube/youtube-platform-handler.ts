@@ -131,6 +131,7 @@ function getPresetPostprocessArgs(preset: YoutubePreset): string[] {
 async function fetchMetadata(
   runCommandImpl: YoutubeHandlerDeps["runCommand"],
   url: string,
+  signal?: AbortSignal,
 ): Promise<YoutubeMetadata> {
   const { exitCode, stdout, stderr } = await runCommandImpl(
     buildYtDlpArgs(
@@ -141,6 +142,7 @@ async function fetchMetadata(
     {
       timeoutMs: config.get("YT_DLP_YOUTUBE_METADATA_TIMEOUT_MS"),
       timeoutLabel: "yt-dlp youtube metadata fetch",
+      signal,
     },
   );
 
@@ -444,7 +446,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
     const metadata = requiresMetadataPrefetch(preset)
-      ? await fetchMetadata(this.deps.runCommand, url)
+      ? await fetchMetadata(this.deps.runCommand, url, options?.signal)
       : undefined;
     const plan = buildDownloadPlan(preset, metadata || {}, options?.maxFileSize);
     const estimatedSize = plan.estimatedSizeBytes;
@@ -508,6 +510,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
         },
         timeoutMs: config.get("YT_DLP_YOUTUBE_DOWNLOAD_TIMEOUT_MS"),
         timeoutLabel: "yt-dlp youtube download",
+        signal: options?.signal,
       },
     );
     logger.debug(`yt-dlp exited with code ${exitCode}`);
