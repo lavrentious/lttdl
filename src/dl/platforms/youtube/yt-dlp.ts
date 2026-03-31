@@ -1,4 +1,5 @@
-import { existsSync, readdirSync } from "fs";
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from "fs";
+import os from "os";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
 import { config } from "src/utils/env-validation";
@@ -17,6 +18,41 @@ export function buildYtDlpArgs(...args: string[]): string[] {
     ...(cookiesPath ? ["--cookies", cookiesPath] : []),
     ...args,
   ];
+}
+
+function prepareYtDlpCommand(cmd: string[]): {
+  cmd: string[];
+  cleanup: () => void;
+} {
+  const cookiesArgIndex = cmd.indexOf("--cookies");
+  if (cookiesArgIndex < 0) {
+    return {
+      cmd,
+      cleanup: () => {},
+    };
+  }
+
+  const cookiesPath = cmd[cookiesArgIndex + 1];
+  if (!cookiesPath) {
+    return {
+      cmd,
+      cleanup: () => {},
+    };
+  }
+
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "lttdl-yt-dlp-cookies-"));
+  const tempCookiesPath = path.join(tempDir, path.basename(cookiesPath) || "cookies.txt");
+  copyFileSync(cookiesPath, tempCookiesPath);
+
+  const preparedCmd = [...cmd];
+  preparedCmd[cookiesArgIndex + 1] = tempCookiesPath;
+
+  return {
+    cmd: preparedCmd,
+    cleanup: () => {
+      rmSync(tempDir, { recursive: true, force: true });
+    },
+  };
 }
 
 export type YtDlpCommandResult = {
@@ -155,9 +191,10 @@ export async function runYtDlpCommand(
   cmd: string[],
   hooks: YtDlpCommandHooks = {},
 ): Promise<YtDlpCommandResult> {
-  logger.debug(`running yt-dlp command: ${cmd.join(" ")}`);
+  const prepared = prepareYtDlpCommand(cmd);
+  logger.debug(`running yt-dlp command: ${prepared.cmd.join(" ")}`);
   const process = Bun.spawn({
-    cmd,
+    cmd: prepared.cmd,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -197,6 +234,7 @@ export async function runYtDlpCommand(
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
+    prepared.cleanup();
   }
 }
 
