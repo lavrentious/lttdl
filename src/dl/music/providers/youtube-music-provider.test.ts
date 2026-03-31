@@ -66,7 +66,7 @@ describe("YoutubeMusicProvider", () => {
     expect(executedCommand).not.toContain("--flat-playlist");
     expect(executedCommand).toContain("--playlist-items");
     expect(executedCommand).toContain("1:5");
-    expect(timeoutMs).toBe(60000);
+    expect(timeoutMs).toBe(120000);
     expect(searchArg).toBe("https://music.youtube.com/search?q=daft%20punk#songs");
     expect(results).toEqual([
       {
