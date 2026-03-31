@@ -1,10 +1,10 @@
-const DEFAULT_MAX_ACTIVE_JOBS_PER_USER = 4;
+import { config } from "src/utils/env-validation";
 
 const activeJobsByUser = new Map<number, number>();
 
 export function tryStartUserJob(
   userId: number,
-  maxActiveJobs = DEFAULT_MAX_ACTIVE_JOBS_PER_USER,
+  maxActiveJobs = config.get("BOT_MAX_ACTIVE_JOBS_PER_USER"),
 ): boolean {
   const activeJobs = activeJobsByUser.get(userId) || 0;
   if (activeJobs >= maxActiveJobs) {
@@ -28,4 +28,3 @@ export function finishUserJob(userId: number) {
 export function getActiveUserJobCount(userId: number): number {
   return activeJobsByUser.get(userId) || 0;
 }
-

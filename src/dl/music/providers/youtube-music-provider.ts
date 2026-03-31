@@ -90,14 +90,9 @@ type YoutubeMusicProviderConfig = {
   searchMode: "music" | "youtube";
 };
 
-const YT_DLP_CONCURRENT_FRAGMENTS = "4";
 const MP3_TARGET_BITRATES_KBPS = [320, 256, 224, 192, 160, 128, 112, 96, 80, 64, 48, 32];
 const MP3_V0_ESTIMATED_BITRATE_KBPS = 280;
 const MP3_CONTAINER_OVERHEAD_BYTES = 512 * 1024;
-const YT_DLP_SEARCH_TIMEOUT_MS = 120_000;
-const YT_DLP_METADATA_TIMEOUT_MS = 30_000;
-const YT_DLP_DOWNLOAD_TIMEOUT_MS = 20 * 60 * 1000;
-const THUMBNAIL_FETCH_TIMEOUT_MS = 15_000;
 
 function estimateFormatSizeBytes(
   format: DownloadFormat,
@@ -323,7 +318,7 @@ async function fetchMetadata(
       url,
     ),
     {
-      timeoutMs: YT_DLP_METADATA_TIMEOUT_MS,
+      timeoutMs: config.get("YT_DLP_MUSIC_METADATA_TIMEOUT_MS"),
       timeoutLabel: "yt-dlp music metadata fetch",
     },
   );
@@ -407,7 +402,10 @@ async function createSquareThumbnail(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), THUMBNAIL_FETCH_TIMEOUT_MS);
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    config.get("YT_DLP_THUMBNAIL_FETCH_TIMEOUT_MS"),
+  );
   const response = await fetch(thumbnailUrl, {
     signal: controller.signal,
   }).catch(() => undefined);
@@ -479,7 +477,7 @@ export class YoutubeMusicProvider implements MusicProvider {
       searchInput,
     );
     const { exitCode, stdout, stderr } = await this.deps.runCommand(command, {
-      timeoutMs: YT_DLP_SEARCH_TIMEOUT_MS,
+      timeoutMs: config.get("YT_DLP_MUSIC_SEARCH_TIMEOUT_MS"),
       timeoutLabel: "yt-dlp music search",
     });
 
@@ -521,7 +519,7 @@ export class YoutubeMusicProvider implements MusicProvider {
         "--audio-quality",
         mp3Quality.value,
         "--concurrent-fragments",
-        YT_DLP_CONCURRENT_FRAGMENTS,
+        String(config.get("YT_DLP_CONCURRENT_FRAGMENTS")),
         "--add-metadata",
         "--embed-thumbnail",
         "--output",
@@ -535,7 +533,7 @@ export class YoutubeMusicProvider implements MusicProvider {
         onStderrLine: async (line) => {
           await emitProgressFromYtDlpLine(line, options?.onProgress);
         },
-        timeoutMs: YT_DLP_DOWNLOAD_TIMEOUT_MS,
+        timeoutMs: config.get("YT_DLP_MUSIC_DOWNLOAD_TIMEOUT_MS"),
         timeoutLabel: "yt-dlp music download",
       },
     );

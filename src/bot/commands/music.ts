@@ -21,6 +21,7 @@ import {
 import type { DownloadProgress, MusicVariant } from "src/dl/types";
 import { DownloadError, toDownloadError } from "src/errors/download-error";
 import { getUserSettings } from "src/settings/user-settings";
+import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
 import { escapeMarkdownV2 } from "src/utils/utils";
 import {
@@ -30,13 +31,6 @@ import {
 } from "./download-presentation";
 
 const MUSIC_CALLBACK_PREFIX = "music";
-const MAX_FILE_SIZE_MB = 50;
-const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
-const MUSIC_PAGE_SIZE = 5;
-const MUSIC_SEARCH_LIMIT = 20;
-const PROGRESS_UPDATE_INTERVAL_MS = 1200;
-const SEARCH_TTL_MS = 10 * 60 * 1000;
-const MAX_ACTIVE_JOBS_PER_USER = 4;
 
 type PendingMusicSearch = {
   userId: number;
@@ -115,7 +109,7 @@ function escapeMarkdownV2Url(url: string): string {
 }
 
 function getPageCount(results: MusicSearchResult[]): number {
-  return Math.max(1, Math.ceil(results.length / MUSIC_PAGE_SIZE));
+  return Math.max(1, Math.ceil(results.length / config.get("BOT_MUSIC_PAGE_SIZE")));
 }
 
 function clampPage(page: number, results: MusicSearchResult[]): number {
@@ -126,15 +120,17 @@ function getPageResults(
   results: MusicSearchResult[],
   page: number,
 ): MusicSearchResult[] {
+  const musicPageSize = config.get("BOT_MUSIC_PAGE_SIZE");
   const normalizedPage = clampPage(page, results);
-  const start = normalizedPage * MUSIC_PAGE_SIZE;
-  return results.slice(start, start + MUSIC_PAGE_SIZE);
+  const start = normalizedPage * musicPageSize;
+  return results.slice(start, start + musicPageSize);
 }
 
 function createProgressUpdater(
   ctx: Context,
   loadingMessage: { chat: { id: number }; message_id: number },
 ) {
+  const progressUpdateIntervalMs = config.get("BOT_PROGRESS_UPDATE_INTERVAL_MS");
   let lastSentAt = 0;
   let lastText = "downloading...";
 
@@ -179,7 +175,7 @@ function createProgressUpdater(
     const now = Date.now();
     if (
       nextText === lastText ||
-      (now - lastSentAt < PROGRESS_UPDATE_INTERVAL_MS &&
+      (now - lastSentAt < progressUpdateIntervalMs &&
         progress.stage === "download" &&
         (progress.percent ?? 0) < 100)
     ) {
@@ -208,13 +204,15 @@ async function sendMusicResult(params: {
   verboseOutput: boolean;
   cleanup: () => void;
 }) {
+  const maxFileSizeMb = config.get("BOT_MAX_FILE_SIZE_MB");
+  const maxFileSize = maxFileSizeMb * 1024 * 1024;
   const { ctx, loadingMessage, variants, verboseOutput, cleanup } = params;
   const validFiles = variants
     .filter(
       (file): file is Extract<MusicVariant, { downloaded: true }> =>
         file.downloaded,
     )
-    .filter((file) => file.size <= MAX_FILE_SIZE);
+    .filter((file) => file.size <= maxFileSize);
   const links = variants.map((file) =>
     generateMusicLinksEntry(file, validFiles[0]),
   );
@@ -222,7 +220,7 @@ async function sendMusicResult(params: {
   if (!validFiles.length) {
     deleteMessageSafe(ctx, loadingMessage);
     await ctx.reply(
-      `music was downloaded, but it exceeds ${MAX_FILE_SIZE_MB}mb and Telegram doesn't allow sending such big files.`,
+      `music was downloaded, but it exceeds ${maxFileSizeMb}mb and Telegram doesn't allow sending such big files.`,
     );
     await sendChunkedLinks(ctx, links);
     cleanup();
@@ -276,9 +274,10 @@ function buildSearchKeyboard(
   results: MusicSearchResult[],
   page: number,
 ) {
+  const musicPageSize = config.get("BOT_MUSIC_PAGE_SIZE");
   const keyboard = new InlineKeyboard();
   const normalizedPage = clampPage(page, results);
-  const offset = normalizedPage * MUSIC_PAGE_SIZE;
+  const offset = normalizedPage * musicPageSize;
 
   getPageResults(results, normalizedPage).forEach((result, index) => {
     const duration = formatDuration(result.durationSeconds);
@@ -323,6 +322,7 @@ function buildSearchMessage(
   results: MusicSearchResult[],
   page: number,
 ) {
+  const musicPageSize = config.get("BOT_MUSIC_PAGE_SIZE");
   const normalizedPage = clampPage(page, results);
   const footer = `page ${normalizedPage + 1}/${getPageCount(results)} - ${results.length} result${
     results.length === 1 ? "" : "s"
@@ -331,7 +331,7 @@ function buildSearchMessage(
     `results for \`${escapeMarkdownV2(query)}\``,
     "",
     ...getPageResults(results, normalizedPage).map((result, index) => {
-      const resultIndex = normalizedPage * MUSIC_PAGE_SIZE + index;
+      const resultIndex = normalizedPage * musicPageSize + index;
       const details = [result.uploader, formatDuration(result.durationSeconds)]
         .filter(Boolean)
         .join(" · ");
@@ -433,6 +433,9 @@ async function runMusicSearch(
   }
 
   cleanupExpiredSearches();
+  const maxActiveJobsPerUser = config.get("BOT_MAX_ACTIVE_JOBS_PER_USER");
+  const musicSearchLimit = config.get("BOT_MUSIC_SEARCH_LIMIT");
+  const searchTtlMs = config.get("BOT_MUSIC_SEARCH_TTL_MS");
 
   const rateLimitResult = checkUserJobRateLimit(ctx.from.id);
   if (!rateLimitResult.allowed) {
@@ -443,9 +446,9 @@ async function runMusicSearch(
     return;
   }
 
-  if (!tryStartUserJob(ctx.from.id, MAX_ACTIVE_JOBS_PER_USER)) {
+  if (!tryStartUserJob(ctx.from.id)) {
     await ctx.reply(
-      `you already have ${MAX_ACTIVE_JOBS_PER_USER} active jobs. wait for one to finish before starting another.`,
+      `you already have ${maxActiveJobsPerUser} active jobs. wait for one to finish before starting another.`,
     );
     return;
   }
@@ -457,14 +460,14 @@ async function runMusicSearch(
   const provider = userSettings.platformPreferences.music.searchProvider;
 
   try {
-    const results = await searchMusic(provider, query, MUSIC_SEARCH_LIMIT);
+    const results = await searchMusic(provider, query, musicSearchLimit);
     const token = randomUUIDv7();
     pendingSearches.set(token, {
       userId: ctx.from.id,
       query,
       provider,
       results,
-      expiresAt: Date.now() + SEARCH_TTL_MS,
+      expiresAt: Date.now() + searchTtlMs,
     });
 
     deleteMessageSafe(ctx, loadingMessage);
@@ -501,6 +504,9 @@ export async function musicSearchFromMessage(
 
 export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
   cleanupExpiredSearches();
+  const searchTtlMs = config.get("BOT_MUSIC_SEARCH_TTL_MS");
+  const maxActiveJobsPerUser = config.get("BOT_MAX_ACTIVE_JOBS_PER_USER");
+  const maxFileSize = config.get("BOT_MAX_FILE_SIZE_MB") * 1024 * 1024;
 
   const data = parseCallbackData(ctx.callbackQuery.data);
   if (!data || !ctx.from) {
@@ -526,7 +532,7 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
     return;
   }
 
-  pending.expiresAt = Date.now() + SEARCH_TTL_MS;
+  pending.expiresAt = Date.now() + searchTtlMs;
 
   if (data.action === "noop") {
     await ctx.answerCallbackQuery();
@@ -572,9 +578,9 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
     return;
   }
 
-  if (!tryStartUserJob(ctx.from.id, MAX_ACTIVE_JOBS_PER_USER)) {
+  if (!tryStartUserJob(ctx.from.id)) {
     await ctx.reply(
-      `you already have ${MAX_ACTIVE_JOBS_PER_USER} active jobs. wait for one to finish before starting another.`,
+      `you already have ${maxActiveJobsPerUser} active jobs. wait for one to finish before starting another.`,
     );
     return;
   }
@@ -597,7 +603,7 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
       pending.provider,
       selected,
       {
-        maxFileSize: MAX_FILE_SIZE,
+        maxFileSize,
         onProgress: progressUpdater,
       },
     );

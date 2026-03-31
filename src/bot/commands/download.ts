@@ -5,18 +5,28 @@ import {
   type Filter,
   type MiddlewareFn,
 } from "grammy";
-import {
-  downloadContent,
-  type GalleryEntry,
-  type MusicVariant,
-  type VideoVariant,
-} from "src/dl/downloader";
 import { finishUserJob, tryStartUserJob } from "src/bot/active-job-limiter";
 import {
   checkUserJobRateLimit,
   formatUserJobRateLimitMessage,
   recordUserJobStart,
 } from "src/bot/user-job-rate-limiter";
+import {
+  downloadContent,
+  type GalleryEntry,
+  type MusicVariant,
+  type VideoVariant,
+} from "src/dl/downloader";
+import type { DownloadProgress } from "src/dl/types";
+import { toDownloadError } from "src/errors/download-error";
+import {
+  getDefaultUserSettings,
+  getUserSettings,
+} from "src/settings/user-settings";
+import { chunkArray } from "src/utils/array";
+import { config } from "src/utils/env-validation";
+import { logError, logger } from "src/utils/logger";
+import { isHttpURL } from "src/utils/utils";
 import {
   buildGalleryLinksMessages,
   buildImageLinksMessages,
@@ -26,21 +36,8 @@ import {
   sendChunkedLinks,
 } from "./download-presentation";
 import { musicSearchFromMessage, shouldFallbackToMusicSearch } from "./music";
-import { toDownloadError } from "src/errors/download-error";
-import {
-  getDefaultUserSettings,
-  getUserSettings,
-} from "src/settings/user-settings";
-import { chunkArray } from "src/utils/array";
-import { logError, logger } from "src/utils/logger";
-import { isHttpURL } from "src/utils/utils";
-import type { DownloadProgress } from "src/dl/types";
 
-const MAX_FILE_SIZE_MB = 50;
-const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 const MAX_MEDIA_GROUP_SIZE = 10;
-const PROGRESS_UPDATE_INTERVAL_MS = 1200;
-const MAX_ACTIVE_JOBS_PER_USER = 4;
 
 function deleteMessageSafe(
   ctx: Filter<Context, "message">,
@@ -83,6 +80,9 @@ function createProgressUpdater(
   ctx: Filter<Context, "message">,
   loadingMessage: { chat: { id: number }; message_id: number },
 ) {
+  const progressUpdateIntervalMs = config.get(
+    "BOT_PROGRESS_UPDATE_INTERVAL_MS",
+  );
   let lastSentAt = 0;
   let lastText = "downloading...";
 
@@ -133,7 +133,7 @@ function createProgressUpdater(
     const now = Date.now();
     if (
       nextText === lastText ||
-      (now - lastSentAt < PROGRESS_UPDATE_INTERVAL_MS &&
+      (now - lastSentAt < progressUpdateIntervalMs &&
         progress.stage === "download" &&
         (progress.percent ?? 0) < 100)
     ) {
@@ -143,9 +143,14 @@ function createProgressUpdater(
     lastSentAt = now;
     lastText = nextText;
     await ctx.api
-      .editMessageText(loadingMessage.chat.id, loadingMessage.message_id, nextText, {
-        parse_mode: "Markdown",
-      })
+      .editMessageText(
+        loadingMessage.chat.id,
+        loadingMessage.message_id,
+        nextText,
+        {
+          parse_mode: "Markdown",
+        },
+      )
       .catch();
   };
 }
@@ -178,10 +183,9 @@ function getGalleryUploadableMedia(entries: GalleryEntry[]) {
     }
 
     const uploaded = entry.variants.find(
-      (
-        variant,
-      ): variant is Extract<typeof variant, { downloaded: true }> =>
-        variant.downloaded && variant.size <= MAX_FILE_SIZE,
+      (variant): variant is Extract<typeof variant, { downloaded: true }> =>
+        variant.downloaded &&
+        variant.size <= config.get("BOT_MAX_FILE_SIZE_MB") * 1024 * 1024,
     );
     if (!uploaded) {
       return;
@@ -221,9 +225,11 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
   cleanup: () => void;
   sendMedia: (variant: Extract<T, { downloaded: true }>) => Promise<unknown>;
 }): Promise<void> {
+  const maxFileSizeMb = config.get("BOT_MAX_FILE_SIZE_MB");
+  const maxFileSize = maxFileSizeMb * 1024 * 1024;
   const validFiles = variants
     .filter((file): file is Extract<T, { downloaded: true }> => file.downloaded)
-    .filter((file) => file.size <= MAX_FILE_SIZE);
+    .filter((file) => file.size <= maxFileSize);
 
   if (!validFiles.length) {
     logger.warn(`no valid files found (max size exceeded or download failed)`);
@@ -263,6 +269,9 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
   ctx,
   next,
 ) => {
+  const maxFileSizeMb = config.get("BOT_MAX_FILE_SIZE_MB");
+  const maxFileSize = maxFileSizeMb * 1024 * 1024;
+  const maxActiveJobsPerUser = config.get("BOT_MAX_ACTIVE_JOBS_PER_USER");
   const query = ctx.message.text;
   if (!query) {
     await next();
@@ -290,9 +299,9 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     }
   }
 
-  if (ctx.from && !tryStartUserJob(ctx.from.id, MAX_ACTIVE_JOBS_PER_USER)) {
+  if (ctx.from && !tryStartUserJob(ctx.from.id)) {
     await ctx.reply(
-      `you already have ${MAX_ACTIVE_JOBS_PER_USER} active jobs. wait for one to finish before starting another.`,
+      `you already have ${maxActiveJobsPerUser} active jobs. wait for one to finish before starting another.`,
     );
     return;
   }
@@ -317,7 +326,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       },
       {
         strategy: downloadStrategy,
-        maxFileSize: MAX_FILE_SIZE,
+        maxFileSize,
         onProgress: progressUpdater,
       },
     );
@@ -325,7 +334,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     if (res.contentType === "video") {
       const uploadedFile = res.variants.find(
         (file): file is Extract<VideoVariant, { downloaded: true }> =>
-          file.downloaded && file.size <= MAX_FILE_SIZE,
+          file.downloaded && file.size <= maxFileSize,
       );
       const links = res.variants.map((file) =>
         generateVideoLinksEntry(file, uploadedFile),
@@ -334,7 +343,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         ctx,
         loadingMessage: msg1,
         progressText: `video downloaded, sending...`,
-        fallbackText: `video was downloaded, but it exceeds ${MAX_FILE_SIZE_MB}mb and Telegram doesn't allow sending such big files.`,
+        fallbackText: `video was downloaded, but it exceeds ${maxFileSizeMb}mb and Telegram doesn't allow sending such big files.`,
         uploadFailureText: `video was downloaded, but Telegram rejected the upload. sending links instead.`,
         uploadAction: "upload_video",
         variants: res.variants,
@@ -366,7 +375,9 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
           const downloaded = variants.filter((variant) => variant.downloaded);
           return InputMediaBuilder.photo(
             new InputFile(
-              downloaded.length ? downloaded[0]!.path : variants[0]!.downloadUrl,
+              downloaded.length
+                ? downloaded[0]!.path
+                : variants[0]!.downloadUrl,
             ),
           );
         });
@@ -399,7 +410,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     } else if (res.contentType === "music") {
       const uploadedFile = res.variants.find(
         (file): file is Extract<MusicVariant, { downloaded: true }> =>
-          file.downloaded && file.size <= MAX_FILE_SIZE,
+          file.downloaded && file.size <= maxFileSize,
       );
       const links = res.variants.map((file) =>
         generateMusicLinksEntry(file, uploadedFile),
@@ -408,7 +419,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         ctx,
         loadingMessage: msg1,
         progressText: `music downloaded, sending...`,
-        fallbackText: `music was downloaded, but it exceeds ${MAX_FILE_SIZE_MB}mb and Telegram doesn't allow sending such big files.`,
+        fallbackText: `music was downloaded, but it exceeds ${maxFileSizeMb}mb and Telegram doesn't allow sending such big files.`,
         uploadFailureText: `music was downloaded, but Telegram rejected the upload. sending links instead.`,
         uploadAction: "upload_voice",
         variants: res.variants,
@@ -417,14 +428,17 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         cleanup,
         sendMedia: (variant) =>
           ctx.replyWithAudio(
-            new InputFile(variant.path, variant.payload.filename || variant.payload.name),
+            new InputFile(
+              variant.path,
+              variant.payload.filename || variant.payload.name,
+            ),
             {
-            duration: variant.payload.durationSeconds,
-            title: variant.payload.name,
-            performer: variant.payload.performer,
-            thumbnail: variant.payload.thumbnailPath
-              ? new InputFile(variant.payload.thumbnailPath)
-              : undefined,
+              duration: variant.payload.durationSeconds,
+              title: variant.payload.name,
+              performer: variant.payload.performer,
+              thumbnail: variant.payload.thumbnailPath
+                ? new InputFile(variant.payload.thumbnailPath)
+                : undefined,
             },
           ),
       });
@@ -437,9 +451,11 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       const galleryLinks = buildGalleryLinksMessages(res.entries);
       const uploadableMedia = getGalleryUploadableMedia(res.entries);
       const skippedIndexes = new Set(
-        res.entries.map((_, index) => index).filter(
-          (index) => !uploadableMedia.some((entry) => entry.index === index),
-        ),
+        res.entries
+          .map((_, index) => index)
+          .filter(
+            (index) => !uploadableMedia.some((entry) => entry.index === index),
+          ),
       );
 
       if (!uploadableMedia.length) {

@@ -71,10 +71,6 @@ type YoutubeHandlerDeps = {
   getVideoResolution: (filePath: string) => Promise<{ width: number; height: number }>;
 };
 
-const YT_DLP_CONCURRENT_FRAGMENTS = "4";
-const YT_DLP_METADATA_TIMEOUT_MS = 30_000;
-const YT_DLP_DOWNLOAD_TIMEOUT_MS = 20 * 60 * 1000;
-
 function getPresetArgs(preset: YoutubePreset): string[] {
   switch (preset) {
     case "auto-video-audio":
@@ -143,7 +139,7 @@ async function fetchMetadata(
       url,
     ),
     {
-      timeoutMs: YT_DLP_METADATA_TIMEOUT_MS,
+      timeoutMs: config.get("YT_DLP_YOUTUBE_METADATA_TIMEOUT_MS"),
       timeoutLabel: "yt-dlp youtube metadata fetch",
     },
   );
@@ -496,7 +492,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
         "--progress",
         "--newline",
         "--concurrent-fragments",
-        YT_DLP_CONCURRENT_FRAGMENTS,
+        String(config.get("YT_DLP_CONCURRENT_FRAGMENTS")),
         "--output",
         outputTemplate,
         ...plan.formatArgs,
@@ -510,7 +506,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
         onStderrLine: async (line) => {
           await emitProgressFromYtDlpLine(line, options?.onProgress);
         },
-        timeoutMs: YT_DLP_DOWNLOAD_TIMEOUT_MS,
+        timeoutMs: config.get("YT_DLP_YOUTUBE_DOWNLOAD_TIMEOUT_MS"),
         timeoutLabel: "yt-dlp youtube download",
       },
     );

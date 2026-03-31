@@ -1,10 +1,8 @@
 import { $, spawn } from "bun";
 import { existsSync, renameSync, rmSync } from "fs";
+import { config } from "./env-validation";
 import { withTimeout } from "./async";
 import { logger } from "./logger";
-
-const FFPROBE_TIMEOUT_MS = 15000;
-const FFMPEG_TIMEOUT_MS = 10 * 60 * 1000;
 
 function getTypeFromBinaryData(binaryData: Uint8Array) {
   if (
@@ -68,9 +66,10 @@ export async function getVideoSize(video: string | File): Promise<number> {
 }
 
 export async function getVideoResolution(path: string) {
+  const ffprobeTimeoutMs = config.get("VIDEO_FFPROBE_TIMEOUT_MS");
   const output = await withTimeout(
     $`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of json ${path}`.text(),
-    FFPROBE_TIMEOUT_MS,
+    ffprobeTimeoutMs,
     "ffprobe",
   );
   const info = JSON.parse(output);
@@ -83,9 +82,10 @@ export async function getVideoMetadata(path: string): Promise<{
   height: number;
   durationSeconds?: number;
 }> {
+  const ffprobeTimeoutMs = config.get("VIDEO_FFPROBE_TIMEOUT_MS");
   const output = await withTimeout(
     $`ffprobe -v error -select_streams v:0 -show_entries stream=width,height,duration -show_entries format=duration -of json ${path}`.text(),
-    FFPROBE_TIMEOUT_MS,
+    ffprobeTimeoutMs,
     "ffprobe",
   );
   const info = JSON.parse(output);
@@ -107,9 +107,10 @@ export async function getVideoMetadata(path: string): Promise<{
 }
 
 export async function getAudioDuration(path: string): Promise<number | undefined> {
+  const ffprobeTimeoutMs = config.get("VIDEO_FFPROBE_TIMEOUT_MS");
   const output = await withTimeout(
     $`ffprobe -v error -show_entries format=duration -of json ${path}`.text(),
-    FFPROBE_TIMEOUT_MS,
+    ffprobeTimeoutMs,
     "ffprobe",
   );
   const info = JSON.parse(output);
@@ -138,6 +139,7 @@ export async function isMp4File(path: string): Promise<boolean> {
 
 async function runFfmpeg(args: string[], label: string): Promise<void> {
   const ffmpegPath = Bun.which("ffmpeg");
+  const ffmpegTimeoutMs = config.get("VIDEO_FFMPEG_TIMEOUT_MS");
   if (!ffmpegPath) {
     throw new Error("ffmpeg is not installed");
   }
@@ -150,7 +152,7 @@ async function runFfmpeg(args: string[], label: string): Promise<void> {
 
   const [exitCode, stderr] = await withTimeout(
     Promise.all([process.exited, new Response(process.stderr).text()]),
-    FFMPEG_TIMEOUT_MS,
+    ffmpegTimeoutMs,
     label,
   );
 

@@ -1,7 +1,12 @@
-export const USER_JOB_MINUTE_LIMIT = 10;
-export const USER_JOB_DAY_LIMIT = 50;
-export const USER_JOB_MINUTE_WINDOW_MS = 60 * 1000;
-export const USER_JOB_DAY_WINDOW_MS = 24 * 60 * 60 * 1000;
+import { config } from "src/utils/env-validation";
+
+export function getUserJobMinuteWindowMs(): number {
+  return config.get("BOT_USER_JOB_RATE_LIMIT_MINUTE_WINDOW_MS");
+}
+
+export function getUserJobDayWindowMs(): number {
+  return config.get("BOT_USER_JOB_RATE_LIMIT_DAY_WINDOW_MS");
+}
 
 export type UserJobRateLimitWindow = "minute" | "day";
 
@@ -15,8 +20,16 @@ export type UserJobRateLimitResult =
 
 const jobTimestampsByUser = new Map<number, number[]>();
 
+function getUserJobMinuteLimit(): number {
+  return config.get("BOT_USER_JOB_RATE_LIMIT_PER_MINUTE");
+}
+
+function getUserJobDayLimit(): number {
+  return config.get("BOT_USER_JOB_RATE_LIMIT_PER_DAY");
+}
+
 function pruneExpiredTimestamps(timestamps: number[], now: number): number[] {
-  return timestamps.filter((timestamp) => now - timestamp < USER_JOB_DAY_WINDOW_MS);
+  return timestamps.filter((timestamp) => now - timestamp < getUserJobDayWindowMs());
 }
 
 function getUserJobTimestamps(userId: number, now: number): number[] {
@@ -30,23 +43,23 @@ export function checkUserJobRateLimit(
   now = Date.now(),
 ): UserJobRateLimitResult {
   const timestamps = getUserJobTimestamps(userId, now);
-  const minuteStarts = timestamps.filter((timestamp) => now - timestamp < USER_JOB_MINUTE_WINDOW_MS);
+  const minuteStarts = timestamps.filter((timestamp) => now - timestamp < getUserJobMinuteWindowMs());
 
-  if (minuteStarts.length >= USER_JOB_MINUTE_LIMIT) {
+  if (minuteStarts.length >= getUserJobMinuteLimit()) {
     const oldestMinuteTimestamp = minuteStarts[0]!;
     return {
       allowed: false,
       window: "minute",
-      retryAfterMs: Math.max(USER_JOB_MINUTE_WINDOW_MS - (now - oldestMinuteTimestamp), 0),
+      retryAfterMs: Math.max(getUserJobMinuteWindowMs() - (now - oldestMinuteTimestamp), 0),
     };
   }
 
-  if (timestamps.length >= USER_JOB_DAY_LIMIT) {
+  if (timestamps.length >= getUserJobDayLimit()) {
     const oldestDayTimestamp = timestamps[0]!;
     return {
       allowed: false,
       window: "day",
-      retryAfterMs: Math.max(USER_JOB_DAY_WINDOW_MS - (now - oldestDayTimestamp), 0),
+      retryAfterMs: Math.max(getUserJobDayWindowMs() - (now - oldestDayTimestamp), 0),
     };
   }
 
@@ -71,13 +84,13 @@ export function formatUserJobRateLimitMessage(result: Extract<UserJobRateLimitRe
   allowed: false;
 }>): string {
   if (result.window === "minute") {
-    return `rate limit exceeded: max ${USER_JOB_MINUTE_LIMIT} heavy jobs per minute. try again in ${Math.ceil(result.retryAfterMs / 1000)}s.`;
+    return `rate limit exceeded: max ${getUserJobMinuteLimit()} heavy jobs per minute. try again in ${Math.ceil(result.retryAfterMs / 1000)}s.`;
   }
 
   const totalSeconds = Math.ceil(result.retryAfterMs / 1000);
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.ceil((totalSeconds % 3600) / 60);
-  return `rate limit exceeded: max ${USER_JOB_DAY_LIMIT} heavy jobs per day. try again in ${hours}h ${minutes}m.`;
+  return `rate limit exceeded: max ${getUserJobDayLimit()} heavy jobs per day. try again in ${hours}h ${minutes}m.`;
 }
 
 export function resetUserJobRateLimit(userId?: number) {

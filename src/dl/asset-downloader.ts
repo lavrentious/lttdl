@@ -5,12 +5,6 @@ import { retryAsync } from "src/utils/async";
 import { config } from "src/utils/env-validation";
 import type { DownloadProgress } from "./types";
 
-const FETCH_INFO_TIMEOUT_MS = 15000;
-const FILE_DOWNLOAD_TIMEOUT_MS = 45000;
-const FETCH_INFO_RETRIES = 1;
-const FILE_DOWNLOAD_RETRIES = 1;
-const RETRY_DELAY_MS = 300;
-
 function formatBytesPerSecond(bytesPerSecond: number): string | undefined {
   if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
     return undefined;
@@ -89,9 +83,12 @@ export function isRetryableNetworkError(error: unknown): boolean {
 
 export class AssetDownloader {
   async getRemoteContentLength(url: string): Promise<number> {
+    const fetchInfoTimeoutMs = config.get("NETWORK_FETCH_INFO_TIMEOUT_MS");
+    const fetchInfoRetries = config.get("NETWORK_FETCH_INFO_RETRIES");
+    const retryDelayMs = config.get("NETWORK_RETRY_DELAY_MS");
     return await retryAsync(
       async () => {
-        const res = await fetchWithTimeout(url, FETCH_INFO_TIMEOUT_MS, {
+        const res = await fetchWithTimeout(url, fetchInfoTimeoutMs, {
           method: "HEAD",
         });
         if (!res.ok) {
@@ -101,8 +98,8 @@ export class AssetDownloader {
         return parseInt(res.headers.get("Content-Length") || "0");
       },
       {
-        retries: FETCH_INFO_RETRIES,
-        delayMs: RETRY_DELAY_MS,
+        retries: fetchInfoRetries,
+        delayMs: retryDelayMs,
         shouldRetry: isRetryableNetworkError,
       },
     );
@@ -117,6 +114,9 @@ export class AssetDownloader {
     const resolvedDir = dir || config.get("TEMP_DIR");
     const resolvedName = name || randomUUIDv7();
     const outputPath = path.join(resolvedDir, resolvedName);
+    const fileDownloadTimeoutMs = config.get("ASSET_FILE_DOWNLOAD_TIMEOUT_MS");
+    const fileDownloadRetries = config.get("ASSET_FILE_DOWNLOAD_RETRIES");
+    const retryDelayMs = config.get("NETWORK_RETRY_DELAY_MS");
     mkdirSync(resolvedDir, { recursive: true });
     await retryAsync(
       async () => {
@@ -128,9 +128,9 @@ export class AssetDownloader {
           }
           timeoutId = setTimeout(() => {
             controller.abort(
-              new Error(`download timed out during ${phase} after ${FILE_DOWNLOAD_TIMEOUT_MS}ms`),
+              new Error(`download timed out during ${phase} after ${fileDownloadTimeoutMs}ms`),
             );
-          }, FILE_DOWNLOAD_TIMEOUT_MS);
+          }, fileDownloadTimeoutMs);
         };
 
         resetTimeout("request");
@@ -225,8 +225,8 @@ export class AssetDownloader {
         });
       },
       {
-        retries: FILE_DOWNLOAD_RETRIES,
-        delayMs: RETRY_DELAY_MS,
+        retries: fileDownloadRetries,
+        delayMs: retryDelayMs,
         shouldRetry: isRetryableNetworkError,
       },
     );

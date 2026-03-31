@@ -1,6 +1,7 @@
 import { DownloadError } from "src/errors/download-error";
 import { retryAsync, withTimeout } from "src/utils/async";
 import { isRetryableNetworkError } from "src/dl/asset-downloader";
+import { config } from "src/utils/env-validation";
 import type { PlatformHandler, ResolveContext } from "../../platform-handler";
 import type { ContentKind, ResolvedContentEntry, ResolvedVariant } from "../../types";
 import type { TiktokProviderAdapter } from "./provider";
@@ -11,10 +12,6 @@ import {
   type TiktokProviderResult,
   type TiktokResolvedContent,
 } from "./types";
-
-const FETCH_INFO_TIMEOUT_MS = 15000;
-const FETCH_INFO_RETRIES = 1;
-const RETRY_DELAY_MS = 300;
 
 function dedupeVariants(variants: ResolvedVariant[]): ResolvedVariant[] {
   const seen = new Set<string>();
@@ -154,16 +151,19 @@ async function resolveWithRetry(
   adapter: TiktokProviderAdapter,
   url: string,
 ): Promise<TiktokProviderResult> {
+  const fetchInfoTimeoutMs = config.get("NETWORK_FETCH_INFO_TIMEOUT_MS");
+  const fetchInfoRetries = config.get("NETWORK_FETCH_INFO_RETRIES");
+  const retryDelayMs = config.get("NETWORK_RETRY_DELAY_MS");
   return await retryAsync(
     async () =>
       await withTimeout(
         adapter.resolve(url),
-        FETCH_INFO_TIMEOUT_MS,
+        fetchInfoTimeoutMs,
         `${adapter.provider} resolve`,
       ),
     {
-      retries: FETCH_INFO_RETRIES,
-      delayMs: RETRY_DELAY_MS,
+      retries: fetchInfoRetries,
+      delayMs: retryDelayMs,
       shouldRetry: isRetryableNetworkError,
     },
   );
