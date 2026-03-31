@@ -11,6 +11,7 @@ import {
   type MusicVariant,
   type VideoVariant,
 } from "src/dl/downloader";
+import { finishUserJob, tryStartUserJob } from "src/bot/active-job-limiter";
 import {
   buildGalleryLinksMessages,
   buildImageLinksMessages,
@@ -34,6 +35,7 @@ const MAX_FILE_SIZE_MB = 50;
 const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 const MAX_MEDIA_GROUP_SIZE = 10;
 const PROGRESS_UPDATE_INTERVAL_MS = 1200;
+const MAX_ACTIVE_JOBS_PER_USER = 4;
 
 function deleteMessageSafe(
   ctx: Filter<Context, "message">,
@@ -272,6 +274,13 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     return;
   }
 
+  if (ctx.from && !tryStartUserJob(ctx.from.id, MAX_ACTIVE_JOBS_PER_USER)) {
+    await ctx.reply(
+      `you already have ${MAX_ACTIVE_JOBS_PER_USER} active jobs. wait for one to finish before starting another.`,
+    );
+    return;
+  }
+
   const msg1 = await ctx.reply(`downloading...`);
   const userSettings = ctx.from
     ? getUserSettings(ctx.from.id)
@@ -471,5 +480,9 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
     ctx.reply(`failed to download: ${errMsg}`);
     await next();
+  } finally {
+    if (ctx.from) {
+      finishUserJob(ctx.from.id);
+    }
   }
 };

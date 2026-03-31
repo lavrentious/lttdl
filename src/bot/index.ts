@@ -1,3 +1,4 @@
+import { run, type RunnerHandle } from "@grammyjs/runner";
 import { Bot } from "grammy";
 import { initUserSettingsDb } from "src/settings/user-settings";
 import { config } from "src/utils/env-validation";
@@ -7,6 +8,7 @@ import { musicCallbackQuery, musicCommand } from "./commands/music";
 import { settingsCallbackQuery, settingsCommand } from "./commands/settings";
 
 let botInstance: Bot | null = null;
+let runnerHandle: RunnerHandle | null = null;
 
 function startupCheck() {
   const ffprobePath = Bun.which("ffprobe");
@@ -76,21 +78,20 @@ export async function initBot() {
     botInstance = createBot();
   }
 
-  if (botInstance.isRunning()) {
-    logger.warn("bot start requested while polling is already running");
+  if (runnerHandle) {
+    logger.warn("bot start requested while runner is already active");
     return;
   }
 
   try {
-    await botInstance.start({
+    await botInstance.api.deleteWebhook({
       drop_pending_updates: true,
-      onStart: () => {
-        logger.info("bot started and listening...");
-      },
     });
+    runnerHandle = run(botInstance);
+    logger.info("bot started and listening...");
   } catch (error) {
-    logger.error("bot polling stopped unexpectedly");
+    runnerHandle = null;
+    logger.error("bot runner stopped unexpectedly");
     throw error;
   }
-  logger.warn("bot polling stopped");
 }

@@ -7,6 +7,7 @@ import {
   type Context,
   type Filter,
 } from "grammy";
+import { finishUserJob, tryStartUserJob } from "src/bot/active-job-limiter";
 import {
   downloadMusicResult,
   searchMusic,
@@ -30,6 +31,7 @@ const MUSIC_PAGE_SIZE = 5;
 const MUSIC_SEARCH_LIMIT = 20;
 const PROGRESS_UPDATE_INTERVAL_MS = 1200;
 const SEARCH_TTL_MS = 10 * 60 * 1000;
+const MAX_ACTIVE_JOBS_PER_USER = 4;
 
 type PendingMusicSearch = {
   userId: number;
@@ -427,6 +429,13 @@ async function runMusicSearch(
 
   cleanupExpiredSearches();
 
+  if (!tryStartUserJob(ctx.from.id, MAX_ACTIVE_JOBS_PER_USER)) {
+    await ctx.reply(
+      `you already have ${MAX_ACTIVE_JOBS_PER_USER} active jobs. wait for one to finish before starting another.`,
+    );
+    return;
+  }
+
   const loadingMessage = await ctx.reply("searching music...");
   const userSettings = getUserSettings(ctx.from.id);
   const provider = userSettings.platformPreferences.music.searchProvider;
@@ -452,6 +461,8 @@ async function runMusicSearch(
     deleteMessageSafe(ctx, loadingMessage);
     const errMsg = toDownloadError(err).message;
     await ctx.reply(`failed to search music: ${errMsg}`);
+  } finally {
+    finishUserJob(ctx.from.id);
   }
 }
 
@@ -533,11 +544,18 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
     return;
   }
 
-  pendingSearches.delete(data.token);
-
   await ctx.answerCallbackQuery({
     text: `downloading ${truncateLabel(selected.title, 40)}`,
   });
+
+  if (!tryStartUserJob(ctx.from.id, MAX_ACTIVE_JOBS_PER_USER)) {
+    await ctx.reply(
+      `you already have ${MAX_ACTIVE_JOBS_PER_USER} active jobs. wait for one to finish before starting another.`,
+    );
+    return;
+  }
+
+  pendingSearches.delete(data.token);
   await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch();
 
   const loadingMessage = await ctx.reply(`downloading ${selected.title}...`);
@@ -572,5 +590,7 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
     deleteMessageSafe(ctx, loadingMessage);
     const errMsg = toDownloadError(err).message;
     await ctx.reply(`failed to download: ${errMsg}`);
+  } finally {
+    finishUserJob(ctx.from.id);
   }
 }
