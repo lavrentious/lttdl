@@ -1,5 +1,4 @@
 import { randomUUIDv7 } from "bun";
-import { existsSync, rmSync } from "fs";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
 import {
@@ -13,6 +12,7 @@ import { getAudioDuration, getVideoMetadata, getVideoResolution } from "src/util
 import { DEFAULT_YOUTUBE_PRESET } from "./types";
 import {
   buildYtDlpArgs,
+  cleanupYtDlpArtifacts,
   emitProgressFromYtDlpLine,
   parseYtDlpMetadata,
   resolveYtDlpFinalPath,
@@ -540,10 +540,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
         message: "download complete",
       });
       const cleanup = () => {
-        if (finalPath && existsSync(finalPath)) {
-          logger.debug(`cleaning up youtube download at ${finalPath}`);
-          rmSync(finalPath);
-        }
+        cleanupYtDlpArtifacts(tempDir, basename);
       };
 
       if (plan.kind === "audio") {
@@ -614,9 +611,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
         cleanup,
       };
     } catch (error) {
-      if (finalPath && existsSync(finalPath)) {
-        rmSync(finalPath, { force: true });
-      }
+      cleanupYtDlpArtifacts(tempDir, basename);
       throw error;
     }
   }

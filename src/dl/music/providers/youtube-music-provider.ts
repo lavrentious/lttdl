@@ -1,5 +1,5 @@
 import { randomUUIDv7 } from "bun";
-import { existsSync, rmSync } from "fs";
+import { existsSync } from "fs";
 import path from "path";
 import {
   DownloadError,
@@ -12,6 +12,7 @@ import { createCenteredSquareJpeg } from "src/utils/image";
 import { getAudioDuration, moveFile, writeMp3Metadata } from "src/utils/video";
 import {
   buildYtDlpArgs,
+  cleanupYtDlpArtifacts,
   emitProgressFromYtDlpLine,
   parseYtDlpMetadata,
   resolveYtDlpFinalPath,
@@ -614,12 +615,7 @@ export class YoutubeMusicProvider implements MusicProvider {
       });
 
       const cleanup = () => {
-        if (finalPath && existsSync(finalPath)) {
-          rmSync(finalPath);
-        }
-        if (thumbnailPath && existsSync(thumbnailPath)) {
-          rmSync(thumbnailPath);
-        }
+        cleanupYtDlpArtifacts(tempDir, basename);
       };
 
       return {
@@ -651,15 +647,7 @@ export class YoutubeMusicProvider implements MusicProvider {
         cleanup,
       };
     } catch (error) {
-      if (taggedPath && existsSync(taggedPath)) {
-        rmSync(taggedPath, { force: true });
-      }
-      if (finalPath && existsSync(finalPath)) {
-        rmSync(finalPath, { force: true });
-      }
-      if (thumbnailPath && existsSync(thumbnailPath)) {
-        rmSync(thumbnailPath, { force: true });
-      }
+      cleanupYtDlpArtifacts(tempDir, basename);
       throw error;
     }
   }

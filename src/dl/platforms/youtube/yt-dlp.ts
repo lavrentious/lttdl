@@ -356,3 +356,24 @@ export function resolveYtDlpFinalPath(
 
   throw new DownloadError("yt-dlp completed but produced no output file");
 }
+
+export function cleanupYtDlpArtifacts(tempDir: string, basename: string) {
+  if (!existsSync(tempDir)) {
+    return;
+  }
+
+  for (const entry of readdirSync(tempDir)) {
+    if (!entry.startsWith(`${basename}.`)) {
+      continue;
+    }
+
+    const entryPath = path.join(tempDir, entry);
+    if (!existsSync(entryPath)) {
+      continue;
+    }
+
+    try {
+      rmSync(entryPath, { force: true, recursive: true });
+    } catch {}
+  }
+}

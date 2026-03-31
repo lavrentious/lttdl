@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
-import { DownloadError } from "src/errors/download-error";
+import {
+  DownloadError,
+  OperationCancelledError,
+} from "src/errors/download-error";
 import { config } from "src/utils/env-validation";
 import { YoutubeMusicProvider } from "./youtube-music-provider";
 
@@ -804,5 +807,63 @@ describe("YoutubeMusicProvider", () => {
     await expect(provider.search("song", 5)).rejects.toThrow(
       new DownloadError("timeout exceeded"),
     );
+  });
+
+  test("cleans up yt-dlp temp artifacts when cancelled mid-download", async () => {
+    const tempDir = createTempDir();
+    const provider = new YoutubeMusicProvider({
+      id: "youtube-music",
+      searchMode: "music",
+    }, {
+      which: () => "/usr/bin/yt-dlp",
+      finalizeAudioFile: async () => {},
+      runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Song title",
+              duration: 222,
+              formats: [
+                {
+                  format_id: "ba",
+                  acodec: "opus",
+                  vcodec: "none",
+                  abr: 160,
+                  ext: "webm",
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        const basename = path.basename(outputTemplate).replace(".%(ext)s", "");
+        await Bun.write(path.join(tempDir, `${basename}.webm`), "audio");
+        await Bun.write(path.join(tempDir, `${basename}.mp3`), "audio");
+        await Bun.write(path.join(tempDir, `${basename}.webp`), "thumb");
+        throw new OperationCancelledError("operation cancelled");
+      },
+    });
+
+    await expect(
+      provider.download(
+        {
+          id: "song",
+          url: "https://www.youtube.com/watch?v=song",
+          title: "Song title",
+        },
+        {
+          tempDir,
+        },
+      ),
+    ).rejects.toThrow("operation cancelled");
+
+    expect(
+      readdirSync(tempDir).filter((entry) => !entry.startsWith(".")).length,
+    ).toBe(0);
+    rmSync(tempDir, { recursive: true, force: true });
   });
 });
