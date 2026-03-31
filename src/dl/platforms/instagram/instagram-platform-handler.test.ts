@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
-import { DownloadError } from "src/errors/download-error";
+import {
+  DownloadError,
+  OperationCancelledError,
+} from "src/errors/download-error";
 import {
   extractInstagramShortcode,
   InstagramPlatformHandler,
@@ -139,6 +142,32 @@ describe("InstagramPlatformHandler", () => {
     }
 
     result.cleanup();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("cleans up the workdir when cancelled after files are downloaded", async () => {
+    const tempDir = createTempDir();
+    const controller = new AbortController();
+    const handler = new InstagramPlatformHandler({
+      which: () => "/usr/bin/instaloader",
+      runCommand: async (_cmd, workdir) => {
+        await Bun.write(path.join(workdir, "lttdl_.jpg"), "image");
+        controller.abort(new OperationCancelledError("operation cancelled"));
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      getImageResolution: async () => ({ width: 1080, height: 1350 }),
+      getVideoMetadata: async () => ({ width: 1, height: 1 }),
+    });
+
+    await expect(
+      handler.download!(
+        "https://instagram.com/p/abcdef/",
+        {},
+        { tempDir, signal: controller.signal },
+      ),
+    ).rejects.toThrow("operation cancelled");
+
+    expect(readdirSync(tempDir)).toEqual([]);
     rmSync(tempDir, { recursive: true, force: true });
   });
 });

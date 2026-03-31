@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
-import { DownloadError } from "src/errors/download-error";
+import {
+  DownloadError,
+  OperationCancelledError,
+} from "src/errors/download-error";
 import { config } from "src/utils/env-validation";
 import { YoutubePlatformHandler } from "./youtube-platform-handler";
 
@@ -661,6 +664,43 @@ describe("YoutubePlatformHandler", () => {
     );
 
     expect(progressStages).toEqual(["download", "completed"]);
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("cleans up the downloaded file when cancelled during post-download processing", async () => {
+    const tempDir = createTempDir();
+    let finalPath = "";
+    const handler = new YoutubePlatformHandler({
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd) => {
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        finalPath = outputTemplate.replace("%(ext)s", "mp4");
+        await Bun.write(finalPath, "video");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            title: "Cancelled video",
+            webpage_url: "https://youtu.be/cancelled",
+          }),
+          stderr: "",
+        };
+      },
+      getVideoResolution: async () => {
+        throw new OperationCancelledError("operation cancelled");
+      },
+    });
+
+    await expect(
+      handler.download!(
+        "https://youtu.be/cancelled",
+        { youtubePreset: "best" },
+        { tempDir },
+      ),
+    ).rejects.toThrow("operation cancelled");
+
+    expect(finalPath).not.toBe("");
+    expect(existsSync(finalPath)).toBe(false);
     rmSync(tempDir, { recursive: true, force: true });
   });
 });

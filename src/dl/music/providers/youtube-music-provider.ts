@@ -536,113 +536,131 @@ export class YoutubeMusicProvider implements MusicProvider {
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
-    const prefetchMetadata = await fetchMetadata(
-      this.deps.runCommand,
-      result.url,
-      options?.signal,
-    ).catch((error) => {
-      if (isCancelledError(error)) {
-        throw error;
-      }
-      return {} as DownloadMetadata;
-    });
-    const audioPlan = chooseAudioDownloadFormat(prefetchMetadata, options?.maxFileSize);
-    const mp3Quality = chooseMp3AudioQuality(prefetchMetadata.duration, options?.maxFileSize);
-    const { exitCode, stdout, stderr } = await this.deps.runCommand(
-      buildYtDlpArgs(
-        ...audioPlan.formatArgs,
-        "--extract-audio",
-        "--audio-format",
-        "mp3",
-        "--audio-quality",
-        mp3Quality.value,
-        "--concurrent-fragments",
-        String(config.get("YT_DLP_CONCURRENT_FRAGMENTS")),
-        "--add-metadata",
-        "--embed-thumbnail",
-        "--output",
-        outputTemplate,
+    let finalPath: string | null = null;
+    let thumbnailPath: string | undefined;
+    let taggedPath: string | null = null;
+
+    try {
+      const prefetchMetadata = await fetchMetadata(
+        this.deps.runCommand,
         result.url,
-      ),
-      {
-        onStdoutLine: async (line) => {
-          await emitProgressFromYtDlpLine(line, options?.onProgress);
+        options?.signal,
+      ).catch((error) => {
+        if (isCancelledError(error)) {
+          throw error;
+        }
+        return {} as DownloadMetadata;
+      });
+      const audioPlan = chooseAudioDownloadFormat(prefetchMetadata, options?.maxFileSize);
+      const mp3Quality = chooseMp3AudioQuality(prefetchMetadata.duration, options?.maxFileSize);
+      const { exitCode, stdout, stderr } = await this.deps.runCommand(
+        buildYtDlpArgs(
+          ...audioPlan.formatArgs,
+          "--extract-audio",
+          "--audio-format",
+          "mp3",
+          "--audio-quality",
+          mp3Quality.value,
+          "--concurrent-fragments",
+          String(config.get("YT_DLP_CONCURRENT_FRAGMENTS")),
+          "--add-metadata",
+          "--embed-thumbnail",
+          "--output",
+          outputTemplate,
+          result.url,
+        ),
+        {
+          onStdoutLine: async (line) => {
+            await emitProgressFromYtDlpLine(line, options?.onProgress);
+          },
+          onStderrLine: async (line) => {
+            await emitProgressFromYtDlpLine(line, options?.onProgress);
+          },
+          timeoutMs: config.get("YT_DLP_MUSIC_DOWNLOAD_TIMEOUT_MS"),
+          timeoutLabel: "yt-dlp music download",
+          signal: options?.signal,
         },
-        onStderrLine: async (line) => {
-          await emitProgressFromYtDlpLine(line, options?.onProgress);
+      );
+
+      if (exitCode !== 0) {
+        throw new DownloadError(stderr.trim() || "yt-dlp failed");
+      }
+
+      const metadata = {
+        ...prefetchMetadata,
+        ...(parseYtDlpMetadata<DownloadMetadata>(stdout) || {}),
+      };
+      finalPath = resolveYtDlpFinalPath(tempDir, basename, "mp3");
+      thumbnailPath = await createSquareThumbnail(
+        metadata.thumbnail,
+        path.join(tempDir, `${basename}.jpg`),
+        options?.signal,
+      );
+      const trackName = metadata.track || metadata.title || result.title;
+      const performer = resolveArtistName(metadata) || result.uploader;
+      const album = resolveAlbumName(metadata);
+      taggedPath = path.join(tempDir, `${basename}.tagged.mp3`);
+      await this.deps.finalizeAudioFile(finalPath, taggedPath, {
+        title: trackName,
+        artist: performer,
+        album,
+        coverPath: thumbnailPath,
+      });
+      moveFile(taggedPath, finalPath);
+      taggedPath = null;
+      await options?.onProgress?.({
+        stage: "completed",
+        message: "download complete",
+      });
+
+      const cleanup = () => {
+        if (finalPath && existsSync(finalPath)) {
+          rmSync(finalPath);
+        }
+        if (thumbnailPath && existsSync(thumbnailPath)) {
+          rmSync(thumbnailPath);
+        }
+      };
+
+      return {
+        res: {
+          contentType: "music",
+          variants: [
+            {
+              downloaded: true,
+              downloadUrl: metadata.webpage_url || result.url,
+              path: finalPath,
+              size: Bun.file(finalPath).size,
+              payload: {
+                name: trackName,
+                filename: ensureMp3Filename(trackName),
+                performer,
+                details: album,
+                thumbnailPath,
+                durationSeconds:
+                  (typeof metadata.duration === "number"
+                    ? Math.round(metadata.duration)
+                    : undefined) ??
+                  result.durationSeconds ??
+                  (await getAudioDuration(finalPath).catch(() => undefined)),
+              },
+              cleanup,
+            },
+          ],
         },
-        timeoutMs: config.get("YT_DLP_MUSIC_DOWNLOAD_TIMEOUT_MS"),
-        timeoutLabel: "yt-dlp music download",
-        signal: options?.signal,
-      },
-    );
-
-    if (exitCode !== 0) {
-      throw new DownloadError(stderr.trim() || "yt-dlp failed");
-    }
-
-    const metadata = {
-      ...prefetchMetadata,
-      ...(parseYtDlpMetadata<DownloadMetadata>(stdout) || {}),
-    };
-    const finalPath = resolveYtDlpFinalPath(tempDir, basename, "mp3");
-    const thumbnailPath = await createSquareThumbnail(
-      metadata.thumbnail,
-      path.join(tempDir, `${basename}.jpg`),
-      options?.signal,
-    );
-    const trackName = metadata.track || metadata.title || result.title;
-    const performer = resolveArtistName(metadata) || result.uploader;
-    const album = resolveAlbumName(metadata);
-    const taggedPath = path.join(tempDir, `${basename}.tagged.mp3`);
-    await this.deps.finalizeAudioFile(finalPath, taggedPath, {
-      title: trackName,
-      artist: performer,
-      album,
-      coverPath: thumbnailPath,
-    });
-    moveFile(taggedPath, finalPath);
-    await options?.onProgress?.({
-      stage: "completed",
-      message: "download complete",
-    });
-
-    const cleanup = () => {
-      if (existsSync(finalPath)) {
-        rmSync(finalPath);
+        cleanup,
+      };
+    } catch (error) {
+      if (taggedPath && existsSync(taggedPath)) {
+        rmSync(taggedPath, { force: true });
+      }
+      if (finalPath && existsSync(finalPath)) {
+        rmSync(finalPath, { force: true });
       }
       if (thumbnailPath && existsSync(thumbnailPath)) {
-        rmSync(thumbnailPath);
+        rmSync(thumbnailPath, { force: true });
       }
-    };
-
-    return {
-      res: {
-        contentType: "music",
-        variants: [
-          {
-            downloaded: true,
-            downloadUrl: metadata.webpage_url || result.url,
-            path: finalPath,
-            size: Bun.file(finalPath).size,
-            payload: {
-              name: trackName,
-              filename: ensureMp3Filename(trackName),
-              performer,
-              details: album,
-              thumbnailPath,
-              durationSeconds:
-                (typeof metadata.duration === "number"
-                  ? Math.round(metadata.duration)
-                  : undefined) ??
-                result.durationSeconds ??
-                (await getAudioDuration(finalPath).catch(() => undefined)),
-            },
-            cleanup,
-          },
-        ],
-      },
-      cleanup,
-    };
+      throw error;
+    }
   }
 }

@@ -445,110 +445,148 @@ export class YoutubePlatformHandler implements PlatformHandler {
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const basename = randomUUIDv7();
     const outputTemplate = path.join(tempDir, `${basename}.%(ext)s`);
-    const metadata = requiresMetadataPrefetch(preset)
-      ? await fetchMetadata(this.deps.runCommand, url, options?.signal)
-      : undefined;
-    const plan = buildDownloadPlan(preset, metadata || {}, options?.maxFileSize);
-    const estimatedSize = plan.estimatedSizeBytes;
-    if (
-      options?.maxFileSize !== undefined &&
-      ((estimatedSize !== undefined && estimatedSize > options.maxFileSize) ||
-        (estimatedSize === undefined &&
-          plan.kind === "video" &&
-          isLikelyOversizeVideo(metadata?.duration, options.maxFileSize)))
-    ) {
-      throw new DownloadError(
-        buildOversizeMessage({
-          estimatedSizeBytes:
-            estimatedSize !== undefined
-              ? estimatedSize
-              : metadata?.duration !== undefined
-                ? estimateVideoSizeFromDuration(metadata.duration)
-                : undefined,
-          exact: estimatedSize !== undefined,
-        }),
-      );
-    }
-    logger.debug(
-      preset === "best"
-        ? "youtube best preset using mp4-first fast path with merge/remux only"
-        : preset === "auto-video-audio"
-          ? `youtube auto-video-audio preset selected ${plan.description}`
-        : preset === "auto-audio-only"
-          ? `youtube auto-audio-only preset selected ${plan.description}`
-        : preset === "fast-1080"
-          ? "youtube fast-1080 preset using capped 1080p mp4-first selection"
-          : preset === "fast-720"
-            ? "youtube fast-720 preset using capped 720p mp4-first selection"
-            : preset === "best-audio"
-              ? "youtube best-audio preset using audio extraction to mp3"
-              : "youtube mid-audio preset using reduced bitrate mp3 extraction",
-    );
-    logger.debug(
-      `youtube preset=${preset}, tempDir=${tempDir}, outputTemplate=${outputTemplate}`,
-    );
-    const { exitCode, stdout, stderr } = await this.deps.runCommand(
-      buildYtDlpArgs(
-        "--no-playlist",
-        "--print-json",
-        "--progress",
-        "--newline",
-        "--concurrent-fragments",
-        String(config.get("YT_DLP_CONCURRENT_FRAGMENTS")),
-        "--output",
-        outputTemplate,
-        ...plan.formatArgs,
-        ...plan.postprocessArgs,
-        url,
-      ),
-      {
-        onStdoutLine: async (line) => {
-          await emitProgressFromYtDlpLine(line, options?.onProgress);
-        },
-        onStderrLine: async (line) => {
-          await emitProgressFromYtDlpLine(line, options?.onProgress);
-        },
-        timeoutMs: config.get("YT_DLP_YOUTUBE_DOWNLOAD_TIMEOUT_MS"),
-        timeoutLabel: "yt-dlp youtube download",
-        signal: options?.signal,
-      },
-    );
-    logger.debug(`yt-dlp exited with code ${exitCode}`);
-
-    if (exitCode !== 0) {
-      logger.debug(`yt-dlp stderr: ${stderr.trim()}`);
-      throw new DownloadError(stderr.trim() || "yt-dlp failed");
-    }
-
-    const runtimeMetadata = {
-      ...(metadata || {}),
-      ...(parseYtDlpMetadata<YoutubeMetadata>(stdout) || {}),
-    };
-    logger.debug(`yt-dlp metadata: ${JSON.stringify(runtimeMetadata)}`);
-    const finalPath = resolveYtDlpFinalPath(
-      tempDir,
-      basename,
-      plan.kind === "audio" ? "mp3" : "mp4",
-    );
-    logger.debug(
-      `youtube final container: ${path.extname(finalPath).replace(/^\./, "") || "unknown"}`,
-    );
-    await options?.onProgress?.({
-      stage: "completed",
-      message: "download complete",
-    });
-    const cleanup = () => {
-      if (existsSync(finalPath)) {
-        logger.debug(`cleaning up youtube download at ${finalPath}`);
-        rmSync(finalPath);
+    let finalPath: string | null = null;
+    try {
+      const metadata = requiresMetadataPrefetch(preset)
+        ? await fetchMetadata(this.deps.runCommand, url, options?.signal)
+        : undefined;
+      const plan = buildDownloadPlan(preset, metadata || {}, options?.maxFileSize);
+      const estimatedSize = plan.estimatedSizeBytes;
+      if (
+        options?.maxFileSize !== undefined &&
+        ((estimatedSize !== undefined && estimatedSize > options.maxFileSize) ||
+          (estimatedSize === undefined &&
+            plan.kind === "video" &&
+            isLikelyOversizeVideo(metadata?.duration, options.maxFileSize)))
+      ) {
+        throw new DownloadError(
+          buildOversizeMessage({
+            estimatedSizeBytes:
+              estimatedSize !== undefined
+                ? estimatedSize
+                : metadata?.duration !== undefined
+                  ? estimateVideoSizeFromDuration(metadata.duration)
+                  : undefined,
+            exact: estimatedSize !== undefined,
+          }),
+        );
       }
-    };
+      logger.debug(
+        preset === "best"
+          ? "youtube best preset using mp4-first fast path with merge/remux only"
+          : preset === "auto-video-audio"
+            ? `youtube auto-video-audio preset selected ${plan.description}`
+          : preset === "auto-audio-only"
+            ? `youtube auto-audio-only preset selected ${plan.description}`
+          : preset === "fast-1080"
+            ? "youtube fast-1080 preset using capped 1080p mp4-first selection"
+            : preset === "fast-720"
+              ? "youtube fast-720 preset using capped 720p mp4-first selection"
+              : preset === "best-audio"
+                ? "youtube best-audio preset using audio extraction to mp3"
+                : "youtube mid-audio preset using reduced bitrate mp3 extraction",
+      );
+      logger.debug(
+        `youtube preset=${preset}, tempDir=${tempDir}, outputTemplate=${outputTemplate}`,
+      );
+      const { exitCode, stdout, stderr } = await this.deps.runCommand(
+        buildYtDlpArgs(
+          "--no-playlist",
+          "--print-json",
+          "--progress",
+          "--newline",
+          "--concurrent-fragments",
+          String(config.get("YT_DLP_CONCURRENT_FRAGMENTS")),
+          "--output",
+          outputTemplate,
+          ...plan.formatArgs,
+          ...plan.postprocessArgs,
+          url,
+        ),
+        {
+          onStdoutLine: async (line) => {
+            await emitProgressFromYtDlpLine(line, options?.onProgress);
+          },
+          onStderrLine: async (line) => {
+            await emitProgressFromYtDlpLine(line, options?.onProgress);
+          },
+          timeoutMs: config.get("YT_DLP_YOUTUBE_DOWNLOAD_TIMEOUT_MS"),
+          timeoutLabel: "yt-dlp youtube download",
+          signal: options?.signal,
+        },
+      );
+      logger.debug(`yt-dlp exited with code ${exitCode}`);
 
-    if (plan.kind === "audio") {
-      logger.debug(`youtube audio ready at ${finalPath}`);
+      if (exitCode !== 0) {
+        logger.debug(`yt-dlp stderr: ${stderr.trim()}`);
+        throw new DownloadError(stderr.trim() || "yt-dlp failed");
+      }
+
+      const runtimeMetadata = {
+        ...(metadata || {}),
+        ...(parseYtDlpMetadata<YoutubeMetadata>(stdout) || {}),
+      };
+      logger.debug(`yt-dlp metadata: ${JSON.stringify(runtimeMetadata)}`);
+      finalPath = resolveYtDlpFinalPath(
+        tempDir,
+        basename,
+        plan.kind === "audio" ? "mp3" : "mp4",
+      );
+      logger.debug(
+        `youtube final container: ${path.extname(finalPath).replace(/^\./, "") || "unknown"}`,
+      );
+      await options?.onProgress?.({
+        stage: "completed",
+        message: "download complete",
+      });
+      const cleanup = () => {
+        if (finalPath && existsSync(finalPath)) {
+          logger.debug(`cleaning up youtube download at ${finalPath}`);
+          rmSync(finalPath);
+        }
+      };
+
+      if (plan.kind === "audio") {
+        logger.debug(`youtube audio ready at ${finalPath}`);
+        return {
+          res: {
+            contentType: "music",
+            variants: [
+              {
+                downloaded: true,
+                downloadUrl: runtimeMetadata.webpage_url || url,
+                path: finalPath,
+                size: Bun.file(finalPath).size,
+                payload: {
+                  name: runtimeMetadata.title,
+                  details: plan.verboseDetails,
+                  durationSeconds:
+                    (typeof runtimeMetadata.duration === "number"
+                      ? Math.round(runtimeMetadata.duration)
+                      : undefined) ??
+                    (await getAudioDuration(finalPath).catch(() => undefined)),
+                },
+                cleanup,
+              },
+            ],
+          },
+          cleanup,
+        };
+      }
+
+      const resolution =
+        typeof runtimeMetadata.width === "number" &&
+        typeof runtimeMetadata.height === "number"
+          ? { width: runtimeMetadata.width, height: runtimeMetadata.height }
+          : await this.deps.getVideoResolution(finalPath);
+      const localVideoMetadata = await getVideoMetadata(finalPath).catch(() => undefined);
+      logger.debug(
+        `youtube video ready at ${finalPath} with resolution ${resolution.width}x${resolution.height}`,
+      );
+
       return {
         res: {
-          contentType: "music",
+          contentType: "video",
           variants: [
             {
               downloaded: true,
@@ -556,13 +594,18 @@ export class YoutubePlatformHandler implements PlatformHandler {
               path: finalPath,
               size: Bun.file(finalPath).size,
               payload: {
-                name: runtimeMetadata.title,
+                resolution: localVideoMetadata
+                  ? {
+                      width: localVideoMetadata.width,
+                      height: localVideoMetadata.height,
+                    }
+                  : resolution,
                 details: plan.verboseDetails,
                 durationSeconds:
+                  localVideoMetadata?.durationSeconds ??
                   (typeof runtimeMetadata.duration === "number"
                     ? Math.round(runtimeMetadata.duration)
-                    : undefined) ??
-                  (await getAudioDuration(finalPath).catch(() => undefined)),
+                    : undefined),
               },
               cleanup,
             },
@@ -570,46 +613,11 @@ export class YoutubePlatformHandler implements PlatformHandler {
         },
         cleanup,
       };
+    } catch (error) {
+      if (finalPath && existsSync(finalPath)) {
+        rmSync(finalPath, { force: true });
+      }
+      throw error;
     }
-
-    const resolution =
-      typeof runtimeMetadata.width === "number" &&
-      typeof runtimeMetadata.height === "number"
-        ? { width: runtimeMetadata.width, height: runtimeMetadata.height }
-        : await this.deps.getVideoResolution(finalPath);
-    const localVideoMetadata = await getVideoMetadata(finalPath).catch(() => undefined);
-    logger.debug(
-      `youtube video ready at ${finalPath} with resolution ${resolution.width}x${resolution.height}`,
-    );
-
-    return {
-      res: {
-        contentType: "video",
-        variants: [
-          {
-            downloaded: true,
-            downloadUrl: runtimeMetadata.webpage_url || url,
-            path: finalPath,
-            size: Bun.file(finalPath).size,
-            payload: {
-              resolution: localVideoMetadata
-                ? {
-                    width: localVideoMetadata.width,
-                    height: localVideoMetadata.height,
-                  }
-                : resolution,
-              details: plan.verboseDetails,
-              durationSeconds:
-                localVideoMetadata?.durationSeconds ??
-                (typeof runtimeMetadata.duration === "number"
-                  ? Math.round(runtimeMetadata.duration)
-                  : undefined),
-            },
-            cleanup,
-          },
-        ],
-      },
-      cleanup,
-    };
   }
 }

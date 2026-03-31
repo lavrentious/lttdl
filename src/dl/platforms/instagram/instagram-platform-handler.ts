@@ -194,121 +194,125 @@ export class InstagramPlatformHandler implements PlatformHandler {
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const workdir = path.join(tempDir, `instagram-${shortcode}-${randomUUIDv7()}`);
     mkdirSync(workdir, { recursive: true });
-
-    await options?.onProgress?.({
-      stage: "status",
-      message: "resolving instagram media...",
-    });
-    throwIfAborted(options?.signal);
-
-    const { exitCode, stderr } = await this.deps.runCommand(
-      [
-        INSTALOADER_BINARY,
-        "--no-metadata-json",
-        "--no-captions",
-        "--no-video-thumbnails",
-        "--dirname-pattern",
-        ".",
-        "--filename-pattern",
-        "lttdl_",
-        "--",
-        `-${shortcode}`,
-      ],
-      workdir,
-      options?.onProgress,
-      options?.signal,
-    );
-
-    if (exitCode !== 0) {
-      throw new DownloadError(stderr.trim() || "instaloader failed");
-    }
-
-    const files = listDownloadedMediaFiles(workdir);
-    if (!files.length) {
-      throw new DownloadError("instaloader returned no media files");
-    }
-
-    const entries: GalleryEntry[] = [];
-    for (const filePath of files) {
-      throwIfAborted(options?.signal);
-      const kind = classifyPath(filePath);
-      if (kind === "image") {
-        const resolution = await this.deps.getImageResolution(filePath);
-        entries.push({
-          kind: "image",
-          variants: [
-            {
-              downloaded: true,
-              downloadUrl: url,
-              path: filePath,
-              size: Bun.file(filePath).size,
-              payload: { resolution },
-            } satisfies PhotoVariant,
-          ],
-        });
-      } else if (kind === "video") {
-        const metadata = await this.deps.getVideoMetadata(filePath);
-        entries.push({
-          kind: "video",
-          variants: [
-            {
-              downloaded: true,
-              downloadUrl: url,
-              path: filePath,
-              size: Bun.file(filePath).size,
-              payload: {
-                resolution: {
-                  width: metadata.width,
-                  height: metadata.height,
-                },
-                durationSeconds: metadata.durationSeconds,
-              },
-            } satisfies VideoVariant,
-          ],
-        });
-      }
-    }
-
-    if (!entries.length) {
-      throw new DownloadError("instaloader returned no supported media");
-    }
-
-    await options?.onProgress?.({
-      stage: "completed",
-      message: "instagram download complete",
-    });
-
     const cleanup = () => {
       rmSync(workdir, { recursive: true, force: true });
     };
 
-    if (entries.length === 1) {
-      const [entry] = entries;
-      if (!entry) {
+    try {
+      await options?.onProgress?.({
+        stage: "status",
+        message: "resolving instagram media...",
+      });
+      throwIfAborted(options?.signal);
+
+      const { exitCode, stderr } = await this.deps.runCommand(
+        [
+          INSTALOADER_BINARY,
+          "--no-metadata-json",
+          "--no-captions",
+          "--no-video-thumbnails",
+          "--dirname-pattern",
+          ".",
+          "--filename-pattern",
+          "lttdl_",
+          "--",
+          `-${shortcode}`,
+        ],
+        workdir,
+        options?.onProgress,
+        options?.signal,
+      );
+
+      if (exitCode !== 0) {
+        throw new DownloadError(stderr.trim() || "instaloader failed");
+      }
+
+      const files = listDownloadedMediaFiles(workdir);
+      if (!files.length) {
+        throw new DownloadError("instaloader returned no media files");
+      }
+
+      const entries: GalleryEntry[] = [];
+      for (const filePath of files) {
+        throwIfAborted(options?.signal);
+        const kind = classifyPath(filePath);
+        if (kind === "image") {
+          const resolution = await this.deps.getImageResolution(filePath);
+          entries.push({
+            kind: "image",
+            variants: [
+              {
+                downloaded: true,
+                downloadUrl: url,
+                path: filePath,
+                size: Bun.file(filePath).size,
+                payload: { resolution },
+              } satisfies PhotoVariant,
+            ],
+          });
+        } else if (kind === "video") {
+          const metadata = await this.deps.getVideoMetadata(filePath);
+          entries.push({
+            kind: "video",
+            variants: [
+              {
+                downloaded: true,
+                downloadUrl: url,
+                path: filePath,
+                size: Bun.file(filePath).size,
+                payload: {
+                  resolution: {
+                    width: metadata.width,
+                    height: metadata.height,
+                  },
+                  durationSeconds: metadata.durationSeconds,
+                },
+              } satisfies VideoVariant,
+            ],
+          });
+        }
+      }
+
+      if (!entries.length) {
         throw new DownloadError("instaloader returned no supported media");
       }
 
+      await options?.onProgress?.({
+        stage: "completed",
+        message: "instagram download complete",
+      });
+
+      if (entries.length === 1) {
+        const [entry] = entries;
+        if (!entry) {
+          throw new DownloadError("instaloader returned no supported media");
+        }
+
+        return {
+          res:
+            entry.kind === "image"
+              ? {
+                  contentType: "image",
+                  variants: [entry.variants],
+                }
+              : {
+                  contentType: "video",
+                  variants: entry.variants,
+                },
+          cleanup,
+        };
+      }
+
       return {
-        res:
-          entry.kind === "image"
-            ? {
-                contentType: "image",
-                variants: [entry.variants],
-              }
-            : {
-                contentType: "video",
-                variants: entry.variants,
-              },
+        res: {
+          contentType: "gallery",
+          entries,
+        },
         cleanup,
       };
+    } catch (error) {
+      cleanup();
+      throw error;
     }
-
-    return {
-      res: {
-        contentType: "gallery",
-        entries,
-      },
-      cleanup,
-    };
   }
 }

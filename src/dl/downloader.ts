@@ -202,52 +202,57 @@ async function buildVideoResult(
   }
 
   const variants: VideoVariant[] = [];
-  if (strategy === "all") {
-    const progressMapper = createAggregateProgressMapper({
-      total: entry.variants.length,
-      message: "downloading video variants",
-      onProgress,
-    });
-    variants.push(
-      ...sortByResolution(
-        await mapWithConcurrency(
-          entry.variants,
-          MAX_DOWNLOAD_CONCURRENCY,
-          async (variant, index) =>
-            await assetProcessor.downloadVideoVariant(
-              variant,
-              tempDir,
-              maxFileSize,
-              progressMapper(index),
-              signal,
-            ),
-          { signal },
-        ),
-      ),
-    );
-  } else {
-    for (const [index, variant] of entry.variants.entries()) {
-      throwIfAborted(signal);
-      const downloaded = await assetProcessor.downloadVideoVariant(
-        variant,
-        tempDir,
-        maxFileSize,
-        createSequentialProgressMapper({
-          index,
-          total: entry.variants.length,
-          message: "downloading video",
-          onProgress,
-        }),
-        signal,
+  try {
+    if (strategy === "all") {
+      const progressMapper = createAggregateProgressMapper({
+        total: entry.variants.length,
+        message: "downloading video variants",
+        onProgress,
+      });
+      const downloadedVariants = await mapWithConcurrency(
+        entry.variants,
+        MAX_DOWNLOAD_CONCURRENCY,
+        async (variant, index) => {
+          const downloaded = await assetProcessor.downloadVideoVariant(
+            variant,
+            tempDir,
+            maxFileSize,
+            progressMapper(index),
+            signal,
+          );
+          variants[index] = downloaded;
+          return downloaded;
+        },
+        { signal },
       );
-      variants.push(downloaded);
-      if (
-        downloaded.downloaded &&
-        (maxFileSize === undefined || downloaded.size <= maxFileSize)
-      ) {
-        break;
+      variants.push(...sortByResolution(downloadedVariants));
+    } else {
+      for (const [index, variant] of entry.variants.entries()) {
+        throwIfAborted(signal);
+        const downloaded = await assetProcessor.downloadVideoVariant(
+          variant,
+          tempDir,
+          maxFileSize,
+          createSequentialProgressMapper({
+            index,
+            total: entry.variants.length,
+            message: "downloading video",
+            onProgress,
+          }),
+          signal,
+        );
+        variants.push(downloaded);
+        if (
+          downloaded.downloaded &&
+          (maxFileSize === undefined || downloaded.size <= maxFileSize)
+        ) {
+          break;
+        }
       }
     }
+  } catch (error) {
+    variants.forEach(cleanupVariant);
+    throw error;
   }
 
   return {
@@ -263,59 +268,77 @@ async function buildImageResult(
   onProgress?: (progress: DownloadProgress) => void | Promise<void>,
   signal?: AbortSignal,
 ): Promise<Extract<DownloadResult, { contentType: "image" }>> {
-  const variants = await mapWithConcurrency(
-    resolved.entries,
-    MAX_IMAGE_ENTRY_CONCURRENCY,
-    async (entry, entryIndex) => {
-      if (strategy === "all") {
-        return sortByResolution(
-          await mapWithConcurrency(
+  const variants: PhotoVariant[][] = [];
+  try {
+    const downloadedVariants = await mapWithConcurrency(
+      resolved.entries,
+      MAX_IMAGE_ENTRY_CONCURRENCY,
+      async (entry, entryIndex) => {
+        if (strategy === "all") {
+          const partialEntryVariants: PhotoVariant[] = [];
+          const entryVariants = await mapWithConcurrency(
             entry.variants,
             MAX_DOWNLOAD_CONCURRENCY,
-            async (variant) =>
-              await assetProcessor.downloadImageVariant(variant, tempDir, undefined, signal),
+            async (variant, variantIndex) => {
+              const downloaded = await assetProcessor.downloadImageVariant(
+                variant,
+                tempDir,
+                undefined,
+                signal,
+              );
+              partialEntryVariants[variantIndex] = downloaded;
+              return downloaded;
+            },
             { signal },
-          ),
-        );
-      }
-
-      const attempted: PhotoVariant[] = [];
-      for (const variant of entry.variants) {
-        throwIfAborted(signal);
-        const total = Math.max(resolved.entries.length, 1);
-        const downloaded = await assetProcessor.downloadImageVariant(
-          variant,
-          tempDir,
-          createSequentialProgressMapper({
-            index: entryIndex,
-            total,
-            message: `downloading image ${entryIndex + 1}/${resolved.entries.length}`,
-            onProgress,
-          }),
-          signal,
-        );
-        attempted.push(downloaded);
-        if (downloaded.downloaded) {
-          return attempted;
+          );
+          variants[entryIndex] = entryVariants;
+          return sortByResolution(entryVariants);
         }
-      }
 
-      return attempted.length
-        ? attempted
-        : [
-            {
-              downloaded: false,
-              downloadUrl: entry.variants[0]?.url || "",
-            } satisfies PhotoVariant,
-          ];
-    },
-    { signal },
-  );
+        const attempted: PhotoVariant[] = [];
+        for (const variant of entry.variants) {
+          throwIfAborted(signal);
+          const total = Math.max(resolved.entries.length, 1);
+          const downloaded = await assetProcessor.downloadImageVariant(
+            variant,
+            tempDir,
+            createSequentialProgressMapper({
+              index: entryIndex,
+              total,
+              message: `downloading image ${entryIndex + 1}/${resolved.entries.length}`,
+              onProgress,
+            }),
+            signal,
+          );
+          attempted.push(downloaded);
+          if (downloaded.downloaded) {
+            variants[entryIndex] = attempted;
+            return attempted;
+          }
+        }
 
-  return {
-    contentType: "image",
-    variants,
-  };
+        const fallback = attempted.length
+          ? attempted
+          : [
+              {
+                downloaded: false,
+                downloadUrl: entry.variants[0]?.url || "",
+              } satisfies PhotoVariant,
+            ];
+        variants[entryIndex] = fallback;
+        return fallback;
+      },
+      { signal },
+    );
+
+    return {
+      contentType: "image",
+      variants: downloadedVariants,
+    };
+  } catch (error) {
+    variants.flat().forEach(cleanupVariant);
+    throw error;
+  }
 }
 
 async function buildAudioResult(
@@ -332,52 +355,59 @@ async function buildAudioResult(
   }
 
   const variants: MusicVariant[] = [];
-  if (strategy === "all") {
-    const progressMapper = createAggregateProgressMapper({
-      total: entry.variants.length,
-      message: "downloading audio variants",
-      onProgress,
-    });
-    variants.push(
-      ...(await mapWithConcurrency(
+  try {
+    if (strategy === "all") {
+      const progressMapper = createAggregateProgressMapper({
+        total: entry.variants.length,
+        message: "downloading audio variants",
+        onProgress,
+      });
+      const downloadedVariants = await mapWithConcurrency(
         entry.variants,
         MAX_DOWNLOAD_CONCURRENCY,
-        async (variant, index) =>
-          await assetProcessor.downloadAudioVariant(
+        async (variant, index) => {
+          const downloaded = await assetProcessor.downloadAudioVariant(
             variant,
             tempDir,
             resolved.title,
             maxFileSize,
             progressMapper(index),
             signal,
-          ),
+          );
+          variants[index] = downloaded;
+          return downloaded;
+        },
         { signal },
-      )),
-    );
-  } else {
-    for (const [index, variant] of entry.variants.entries()) {
-      throwIfAborted(signal);
-      const downloaded = await assetProcessor.downloadAudioVariant(
-        variant,
-        tempDir,
-        resolved.title,
-        maxFileSize,
-        createSequentialProgressMapper({
-          index,
-          total: entry.variants.length,
-          message: "downloading audio",
-          onProgress,
-        }),
-        signal,
       );
-      variants.push(downloaded);
-      if (
-        downloaded.downloaded &&
-        (maxFileSize === undefined || downloaded.size <= maxFileSize)
-      ) {
-        break;
+      variants.push(...downloadedVariants);
+    } else {
+      for (const [index, variant] of entry.variants.entries()) {
+        throwIfAborted(signal);
+        const downloaded = await assetProcessor.downloadAudioVariant(
+          variant,
+          tempDir,
+          resolved.title,
+          maxFileSize,
+          createSequentialProgressMapper({
+            index,
+            total: entry.variants.length,
+            message: "downloading audio",
+            onProgress,
+          }),
+          signal,
+        );
+        variants.push(downloaded);
+        if (
+          downloaded.downloaded &&
+          (maxFileSize === undefined || downloaded.size <= maxFileSize)
+        ) {
+          break;
+        }
       }
     }
+  } catch (error) {
+    variants.forEach(cleanupVariant);
+    throw error;
   }
 
   return {
