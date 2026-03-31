@@ -21,6 +21,7 @@ config.init({
   BOT_TOKEN: "test",
   TEMP_DIR: testDbDir,
   DB_PATH: path.join(testDbDir, "app.db"),
+  YT_DLP_COOKIES_PATH: path.join(testDbDir, "cookies.txt"),
 });
 initUserSettingsDb();
 

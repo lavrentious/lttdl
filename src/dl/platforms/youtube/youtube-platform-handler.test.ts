@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
+import { config } from "src/utils/env-validation";
 import { YoutubePlatformHandler } from "./youtube-platform-handler";
 
 function createTempDir(): string {
@@ -10,6 +11,14 @@ function createTempDir(): string {
   mkdirSync(dir, { recursive: true });
   return dir;
 }
+
+config.init({
+  NODE_ENV: "test",
+  BOT_TOKEN: "test",
+  TEMP_DIR: os.tmpdir(),
+  DB_PATH: path.join(os.tmpdir(), "lttdl-test.db"),
+  YT_DLP_COOKIES_PATH: path.join(os.tmpdir(), "lttdl-cookies.txt"),
+});
 
 describe("YoutubePlatformHandler", () => {
   test("downloads auto video+audio preset as the best fitting video", async () => {
@@ -76,6 +85,8 @@ describe("YoutubePlatformHandler", () => {
 
         const formatIndex = cmd.indexOf("-f");
         selectedFormatArg = cmd[formatIndex + 1]!;
+        expect(cmd).toContain("--cookies");
+        expect(cmd).toContain(path.join(os.tmpdir(), "lttdl-cookies.txt"));
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
         const finalPath = outputTemplate.replace("%(ext)s", "mp4");
@@ -148,6 +159,8 @@ describe("YoutubePlatformHandler", () => {
 
         const formatIndex = cmd.indexOf("-f");
         selectedFormatArg = cmd[formatIndex + 1]!;
+        expect(cmd).toContain("--cookies");
+        expect(cmd).toContain(path.join(os.tmpdir(), "lttdl-cookies.txt"));
         expect(cmd).toContain("-x");
         expect(cmd).toContain("--audio-format");
         const outputArgIndex = cmd.indexOf("--output");

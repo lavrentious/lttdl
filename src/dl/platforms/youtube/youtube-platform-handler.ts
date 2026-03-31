@@ -12,12 +12,12 @@ import { logger } from "src/utils/logger";
 import { getAudioDuration, getVideoMetadata, getVideoResolution } from "src/utils/video";
 import { DEFAULT_YOUTUBE_PRESET } from "./types";
 import {
+  buildYtDlpArgs,
   emitProgressFromYtDlpLine,
   parseYtDlpMetadata,
   resolveYtDlpFinalPath,
   runYtDlpCommand,
   YT_DLP_BINARY,
-  YT_DLP_COMMON_ARGS,
   type YtDlpCommandHooks,
   type YtDlpCommandResult,
   type YtDlpRunCommand,
@@ -137,13 +137,11 @@ async function fetchMetadata(
   url: string,
 ): Promise<YoutubeMetadata> {
   const { exitCode, stdout, stderr } = await runCommandImpl(
-    [
-      YT_DLP_BINARY,
-      ...YT_DLP_COMMON_ARGS,
+    buildYtDlpArgs(
       "--no-playlist",
       "--dump-single-json",
       url,
-    ],
+    ),
     {
       timeoutMs: YT_DLP_METADATA_TIMEOUT_MS,
       timeoutLabel: "yt-dlp youtube metadata fetch",
@@ -492,9 +490,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
       `youtube preset=${preset}, tempDir=${tempDir}, outputTemplate=${outputTemplate}`,
     );
     const { exitCode, stdout, stderr } = await this.deps.runCommand(
-      [
-        YT_DLP_BINARY,
-        ...YT_DLP_COMMON_ARGS,
+      buildYtDlpArgs(
         "--no-playlist",
         "--print-json",
         "--progress",
@@ -506,7 +502,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
         ...plan.formatArgs,
         ...plan.postprocessArgs,
         url,
-      ],
+      ),
       {
         onStdoutLine: async (line) => {
           await emitProgressFromYtDlpLine(line, options?.onProgress);

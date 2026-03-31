@@ -1,11 +1,23 @@
 import { existsSync, readdirSync } from "fs";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
+import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
 import type { DownloadProgress } from "src/dl/types";
 
 export const YT_DLP_BINARY = "yt-dlp";
 export const YT_DLP_COMMON_ARGS = ["--js-runtimes", "bun"] as const;
+
+export function buildYtDlpArgs(...args: string[]): string[] {
+  const cookiesPath = config.get("YT_DLP_COOKIES_PATH");
+
+  return [
+    YT_DLP_BINARY,
+    ...YT_DLP_COMMON_ARGS,
+    ...(cookiesPath ? ["--cookies", cookiesPath] : []),
+    ...args,
+  ];
+}
 
 export type YtDlpCommandResult = {
   exitCode: number;

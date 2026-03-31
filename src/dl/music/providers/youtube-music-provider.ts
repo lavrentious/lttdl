@@ -7,12 +7,12 @@ import { config } from "src/utils/env-validation";
 import { createCenteredSquareJpeg } from "src/utils/image";
 import { getAudioDuration, moveFile, writeMp3Metadata } from "src/utils/video";
 import {
+  buildYtDlpArgs,
   emitProgressFromYtDlpLine,
   parseYtDlpMetadata,
   resolveYtDlpFinalPath,
   runYtDlpCommand,
   YT_DLP_BINARY,
-  YT_DLP_COMMON_ARGS,
   type YtDlpRunCommand,
 } from "src/dl/platforms/youtube/yt-dlp";
 import type {
@@ -317,13 +317,11 @@ async function fetchMetadata(
   url: string,
 ): Promise<DownloadMetadata> {
   const { exitCode, stdout, stderr } = await runCommandImpl(
-    [
-      YT_DLP_BINARY,
-      ...YT_DLP_COMMON_ARGS,
+    buildYtDlpArgs(
       "--no-playlist",
       "--dump-single-json",
       url,
-    ],
+    ),
     {
       timeoutMs: YT_DLP_METADATA_TIMEOUT_MS,
       timeoutLabel: "yt-dlp music metadata fetch",
@@ -474,14 +472,12 @@ export class YoutubeMusicProvider implements MusicProvider {
       this.provider.searchMode === "music"
         ? `https://music.youtube.com/search?q=${encodeURIComponent(query)}#songs`
         : `ytsearch${limit}:${query}`;
-    const command = [
-      YT_DLP_BINARY,
-      ...YT_DLP_COMMON_ARGS,
+    const command = buildYtDlpArgs(
       "--dump-single-json",
       ...(this.provider.searchMode === "youtube" ? ["--flat-playlist"] : []),
       ...(this.provider.searchMode === "music" ? ["--playlist-items", `1:${limit}`] : []),
       searchInput,
-    ];
+    );
     const { exitCode, stdout, stderr } = await this.deps.runCommand(command, {
       timeoutMs: YT_DLP_SEARCH_TIMEOUT_MS,
       timeoutLabel: "yt-dlp music search",
@@ -517,9 +513,7 @@ export class YoutubeMusicProvider implements MusicProvider {
     const audioPlan = chooseAudioDownloadFormat(prefetchMetadata, options?.maxFileSize);
     const mp3Quality = chooseMp3AudioQuality(prefetchMetadata.duration, options?.maxFileSize);
     const { exitCode, stdout, stderr } = await this.deps.runCommand(
-      [
-        YT_DLP_BINARY,
-        ...YT_DLP_COMMON_ARGS,
+      buildYtDlpArgs(
         ...audioPlan.formatArgs,
         "--extract-audio",
         "--audio-format",
@@ -533,7 +527,7 @@ export class YoutubeMusicProvider implements MusicProvider {
         "--output",
         outputTemplate,
         result.url,
-      ],
+      ),
       {
         onStdoutLine: async (line) => {
           await emitProgressFromYtDlpLine(line, options?.onProgress);

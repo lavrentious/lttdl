@@ -5,6 +5,7 @@ export const envSchema = z.object({
   BOT_TOKEN: z.string(),
   TEMP_DIR: z.string().default("./temp"),
   DB_PATH: z.string().default("./data/app.db"),
+  YT_DLP_COOKIES_PATH: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

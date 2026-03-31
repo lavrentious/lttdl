@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
 import { DownloadError } from "src/errors/download-error";
+import { config } from "src/utils/env-validation";
 import { YoutubeMusicProvider } from "./youtube-music-provider";
 
 function createTempDir(): string {
@@ -10,6 +11,14 @@ function createTempDir(): string {
   mkdirSync(dir, { recursive: true });
   return dir;
 }
+
+config.init({
+  NODE_ENV: "test",
+  BOT_TOKEN: "test",
+  TEMP_DIR: os.tmpdir(),
+  DB_PATH: path.join(os.tmpdir(), "lttdl-music-test.db"),
+  YT_DLP_COOKIES_PATH: path.join(os.tmpdir(), "lttdl-cookies.txt"),
+});
 
 describe("YoutubeMusicProvider", () => {
   test("searches youtube music songs and returns normalized results", async () => {
@@ -52,6 +61,8 @@ describe("YoutubeMusicProvider", () => {
 
     const results = await provider.search("daft punk", 5);
 
+    expect(executedCommand).toContain("--cookies");
+    expect(executedCommand).toContain(path.join(os.tmpdir(), "lttdl-cookies.txt"));
     expect(executedCommand).not.toContain("--flat-playlist");
     expect(executedCommand).toContain("--playlist-items");
     expect(executedCommand).toContain("1:5");
@@ -232,6 +243,8 @@ describe("YoutubeMusicProvider", () => {
       },
     );
 
+    expect(executedCommand).toContain("--cookies");
+    expect(executedCommand).toContain(path.join(os.tmpdir(), "lttdl-cookies.txt"));
     expect(executedCommand).toContain("--extract-audio");
     expect(executedCommand).toContain("-f");
     expect(executedCommand).toContain("ba");
