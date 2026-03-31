@@ -55,7 +55,7 @@ describe("YoutubeMusicProvider", () => {
     expect(executedCommand).not.toContain("--flat-playlist");
     expect(executedCommand).toContain("--playlist-items");
     expect(executedCommand).toContain("1:5");
-    expect(timeoutMs).toBe(30000);
+    expect(timeoutMs).toBe(60000);
     expect(searchArg).toBe("https://music.youtube.com/search?q=daft%20punk#songs");
     expect(results).toEqual([
       {
@@ -748,6 +748,23 @@ describe("YoutubeMusicProvider", () => {
 
     await expect(provider.search("song", 5)).rejects.toThrow(
       new DownloadError("yt-dlp is not installed"),
+    );
+  });
+
+  test("surfaces search timeouts clearly", async () => {
+    const provider = new YoutubeMusicProvider({
+      id: "youtube-music",
+      searchMode: "music",
+    }, {
+      which: () => "/usr/bin/yt-dlp",
+      finalizeAudioFile: async () => {},
+      runCommand: async () => {
+        throw new DownloadError("timeout exceeded");
+      },
+    });
+
+    await expect(provider.search("song", 5)).rejects.toThrow(
+      new DownloadError("timeout exceeded"),
     );
   });
 });

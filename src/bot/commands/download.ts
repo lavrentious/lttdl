@@ -20,7 +20,7 @@ import {
   sendChunkedLinks,
 } from "./download-presentation";
 import { musicSearchFromMessage, shouldFallbackToMusicSearch } from "./music";
-import { DownloadError } from "src/errors/download-error";
+import { toDownloadError } from "src/errors/download-error";
 import {
   getDefaultUserSettings,
   getUserSettings,
@@ -467,8 +467,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     await next();
   } catch (err) {
     logError(err);
-    const errMsg =
-      err instanceof DownloadError ? err.message : "internal error";
+    const errMsg = toDownloadError(err).message;
     ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
     ctx.reply(`failed to download: ${errMsg}`);
     await next();

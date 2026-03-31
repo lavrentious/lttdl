@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mapWithConcurrency, retryAsync } from "./async";
+import { DownloadError } from "src/errors/download-error";
+import { mapWithConcurrency, retryAsync, withTimeout } from "./async";
 
 describe("mapWithConcurrency", () => {
   test("preserves item order", async () => {
@@ -52,5 +53,17 @@ describe("retryAsync", () => {
 
     expect(result).toBe("ok");
     expect(attempts).toBe(3);
+  });
+});
+
+describe("withTimeout", () => {
+  test("throws a DownloadError when the timeout is exceeded", async () => {
+    await expect(
+      withTimeout(
+        new Promise((resolve) => setTimeout(resolve, 20)),
+        1,
+        "slow operation",
+      ),
+    ).rejects.toEqual(new DownloadError("timeout exceeded"));
   });
 });

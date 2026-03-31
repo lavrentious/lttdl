@@ -13,7 +13,7 @@ import {
   type MusicSearchResult,
 } from "src/dl/music";
 import type { DownloadProgress, MusicVariant } from "src/dl/types";
-import { DownloadError } from "src/errors/download-error";
+import { DownloadError, toDownloadError } from "src/errors/download-error";
 import { getUserSettings } from "src/settings/user-settings";
 import { logError, logger } from "src/utils/logger";
 import { escapeMarkdownV2 } from "src/utils/utils";
@@ -228,7 +228,10 @@ async function sendMusicResult(params: {
     await ctx.api.sendChatAction(loadingMessage.chat.id, "upload_voice");
     const variant = validFiles[0]!;
     await ctx.replyWithAudio(
-      new InputFile(variant.path, variant.payload.filename || variant.payload.name),
+      new InputFile(
+        variant.path,
+        variant.payload.filename || variant.payload.name,
+      ),
       {
         duration: variant.payload.durationSeconds,
         title: variant.payload.name,
@@ -447,8 +450,7 @@ async function runMusicSearch(
   } catch (err) {
     logError(err);
     deleteMessageSafe(ctx, loadingMessage);
-    const errMsg =
-      err instanceof DownloadError ? err.message : "internal error";
+    const errMsg = toDownloadError(err).message;
     await ctx.reply(`failed to search music: ${errMsg}`);
   }
 }
@@ -568,8 +570,7 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
   } catch (err) {
     logError(err);
     deleteMessageSafe(ctx, loadingMessage);
-    const errMsg =
-      err instanceof DownloadError ? err.message : "internal error";
+    const errMsg = toDownloadError(err).message;
     await ctx.reply(`failed to download: ${errMsg}`);
   }
 }

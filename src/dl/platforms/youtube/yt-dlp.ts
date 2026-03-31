@@ -167,11 +167,7 @@ export async function runYtDlpCommand(
                 process.kill();
               } catch {}
 
-              reject(
-                new Error(
-                  `${hooks.timeoutLabel || "yt-dlp command"} timed out after ${hooks.timeoutMs}ms`,
-                ),
-              );
+              reject(new DownloadError("timeout exceeded"));
             }, hooks.timeoutMs);
           }),
         ])

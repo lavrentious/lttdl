@@ -1,6 +1,6 @@
 import { config } from "src/utils/env-validation";
 import { mapWithConcurrency } from "src/utils/async";
-import { DownloadError } from "src/errors/download-error";
+import { DownloadError, toDownloadError } from "src/errors/download-error";
 import { AssetDownloader } from "./asset-downloader";
 import { AssetProcessor } from "./asset-processor";
 import type { PlatformHandler, ResolveContext } from "./platform-handler";
@@ -377,48 +377,52 @@ export async function downloadContent(
   options: DownloadOptions = {},
   router: DownloadRouter = defaultRouter,
 ): Promise<DownloadExecutionResult> {
-  const handler = router.resolveHandler(url);
-  if (handler.download) {
-    return await handler.download(url, context, options);
+  try {
+    const handler = router.resolveHandler(url);
+    if (handler.download) {
+      return await handler.download(url, context, options);
+    }
+
+    if (!handler.resolve) {
+      throw new DownloadError(`platform ${handler.platform} is not implemented`);
+    }
+
+    const resolved = await handler.resolve(url, context);
+    const tempDir = options.tempDir || config.get("TEMP_DIR");
+    const strategy = options.strategy || "all";
+    const maxFileSize = options.maxFileSize;
+    const onProgress = options.onProgress;
+
+    let res: DownloadResult;
+    if (resolved.kind === "video") {
+      res = await buildVideoResult(
+        resolved,
+        tempDir,
+        strategy,
+        maxFileSize,
+        onProgress,
+      );
+    } else if (resolved.kind === "image") {
+      res = await buildImageResult(resolved, tempDir, strategy, onProgress);
+    } else {
+      res = await buildAudioResult(
+        resolved,
+        tempDir,
+        strategy,
+        maxFileSize,
+        onProgress,
+      );
+    }
+
+    return {
+      res,
+      cleanup: () => {
+        res.variants.flat(1).forEach(cleanupVariant);
+      },
+    };
+  } catch (error) {
+    throw toDownloadError(error);
   }
-
-  if (!handler.resolve) {
-    throw new DownloadError(`platform ${handler.platform} is not implemented`);
-  }
-
-  const resolved = await handler.resolve(url, context);
-  const tempDir = options.tempDir || config.get("TEMP_DIR");
-  const strategy = options.strategy || "all";
-  const maxFileSize = options.maxFileSize;
-  const onProgress = options.onProgress;
-
-  let res: DownloadResult;
-  if (resolved.kind === "video") {
-    res = await buildVideoResult(
-      resolved,
-      tempDir,
-      strategy,
-      maxFileSize,
-      onProgress,
-    );
-  } else if (resolved.kind === "image") {
-    res = await buildImageResult(resolved, tempDir, strategy, onProgress);
-  } else {
-    res = await buildAudioResult(
-      resolved,
-      tempDir,
-      strategy,
-      maxFileSize,
-      onProgress,
-    );
-  }
-
-  return {
-    res,
-    cleanup: () => {
-      res.variants.flat(1).forEach(cleanupVariant);
-    },
-  };
 }
 
 export type {

@@ -1,3 +1,5 @@
+import { DownloadError } from "src/errors/download-error";
+
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   concurrency: number,
@@ -69,7 +71,7 @@ export async function withTimeout<T>(
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+      reject(new DownloadError("timeout exceeded"));
     }, timeoutMs);
   });
 
