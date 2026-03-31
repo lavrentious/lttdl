@@ -19,6 +19,7 @@ import {
   generateVideoLinksEntry,
   sendChunkedLinks,
 } from "./download-presentation";
+import { musicSearchFromMessage, shouldFallbackToMusicSearch } from "./music";
 import { DownloadError } from "src/errors/download-error";
 import {
   getDefaultUserSettings,
@@ -256,7 +257,17 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
   next,
 ) => {
   const query = ctx.message.text;
-  if (!query || !isHttpURL(query)) {
+  if (!query) {
+    await next();
+    return;
+  }
+
+  if (!isHttpURL(query)) {
+    if (shouldFallbackToMusicSearch(query)) {
+      await musicSearchFromMessage(ctx, query.trim());
+      return;
+    }
+
     await next();
     return;
   }

@@ -5,6 +5,7 @@ import {
   type CallbackQueryContext,
   type CommandContext,
   type Context,
+  type Filter,
 } from "grammy";
 import {
   downloadMusicResult,
@@ -340,6 +341,11 @@ function parseMusicCommandQuery(ctx: CommandContext<Context>): string {
   return text.replace(/^\/music(?:@\S+)?\s*/i, "").trim();
 }
 
+export function shouldFallbackToMusicSearch(text: string): boolean {
+  const query = text.trim();
+  return query.length > 0 && !query.startsWith("/");
+}
+
 function parseCallbackData(data: string):
   | {
       action: "pick";
@@ -407,19 +413,16 @@ async function editSearchPage(
   );
 }
 
-export async function musicCommand(ctx: CommandContext<Context>) {
+async function runMusicSearch(
+  ctx: CommandContext<Context> | Filter<Context, "message">,
+  query: string,
+) {
   if (!ctx.from) {
     await ctx.reply("unable to resolve user");
     return;
   }
 
   cleanupExpiredSearches();
-
-  const query = parseMusicCommandQuery(ctx);
-  if (!query) {
-    await ctx.reply("usage: /music <song or artist>");
-    return;
-  }
 
   const loadingMessage = await ctx.reply("searching music...");
   const userSettings = getUserSettings(ctx.from.id);
@@ -448,6 +451,23 @@ export async function musicCommand(ctx: CommandContext<Context>) {
       err instanceof DownloadError ? err.message : "internal error";
     await ctx.reply(`failed to search music: ${errMsg}`);
   }
+}
+
+export async function musicCommand(ctx: CommandContext<Context>) {
+  const query = parseMusicCommandQuery(ctx);
+  if (!query) {
+    await ctx.reply("usage: /music <song or artist>");
+    return;
+  }
+
+  await runMusicSearch(ctx, query);
+}
+
+export async function musicSearchFromMessage(
+  ctx: Filter<Context, "message">,
+  query: string,
+) {
+  await runMusicSearch(ctx, query);
 }
 
 export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
