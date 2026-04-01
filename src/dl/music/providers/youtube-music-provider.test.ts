@@ -38,6 +38,7 @@ config.init({
   YT_DLP_MUSIC_METADATA_TIMEOUT_MS: 30000,
   YT_DLP_MUSIC_DOWNLOAD_TIMEOUT_MS: 1200000,
   YT_DLP_THUMBNAIL_FETCH_TIMEOUT_MS: 15000,
+  YT_DLP_MUSIC_SEARCH_REMOTE_COMPONENTS: ["ejs:github"],
   NETWORK_FETCH_INFO_TIMEOUT_MS: 15000,
   NETWORK_FETCH_INFO_RETRIES: 1,
   NETWORK_RETRY_DELAY_MS: 300,
@@ -90,6 +91,8 @@ describe("YoutubeMusicProvider", () => {
     const results = await provider.search("daft punk", 5);
 
     expect(executedCommand).not.toContain("--cookies");
+    expect(executedCommand).toContain("--remote-components");
+    expect(executedCommand).toContain("ejs:github");
     expect(executedCommand).not.toContain("--flat-playlist");
     expect(executedCommand).toContain("--playlist-items");
     expect(executedCommand).toContain("1:5");

@@ -514,7 +514,10 @@ export class YoutubeMusicProvider implements MusicProvider {
           : []),
         searchInput,
       ],
-      { includeCookies: options?.useCookies ?? false },
+      {
+        includeCookies: options?.useCookies ?? false,
+        remoteComponents: config.get("YT_DLP_MUSIC_SEARCH_REMOTE_COMPONENTS"),
+      },
     );
     const { exitCode, stdout, stderr } = await this.deps.runCommand(command, {
       timeoutMs: config.get("YT_DLP_MUSIC_SEARCH_TIMEOUT_MS"),

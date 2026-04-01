@@ -11,14 +11,16 @@ export const YT_DLP_COMMON_ARGS = ["--js-runtimes", "bun"] as const;
 
 export function buildYtDlpArgs(
   args: string[],
-  options: { includeCookies?: boolean } = {},
+  options: { includeCookies?: boolean; remoteComponents?: string[] } = {},
 ): string[] {
   const cookiesPath = config.get("YT_DLP_COOKIES_PATH");
   const includeCookies = options.includeCookies ?? true;
+  const remoteComponents = options.remoteComponents || [];
 
   return [
     YT_DLP_BINARY,
     ...YT_DLP_COMMON_ARGS,
+    ...remoteComponents.flatMap((component) => ["--remote-components", component]),
     ...(includeCookies && cookiesPath ? ["--cookies", cookiesPath] : []),
     ...args,
   ];

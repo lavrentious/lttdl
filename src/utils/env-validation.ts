@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+function parseCsvEnv(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 export const envSchema = z.object({
   // Core runtime identity. Usually set once and rarely changed.
   NODE_ENV: z.enum(["development", "production", "test"]),
@@ -31,6 +38,10 @@ export const envSchema = z.object({
   YT_DLP_MUSIC_METADATA_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   YT_DLP_MUSIC_DOWNLOAD_TIMEOUT_MS: z.coerce.number().int().positive().default(20 * 60 * 1000),
   YT_DLP_THUMBNAIL_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+  YT_DLP_MUSIC_SEARCH_REMOTE_COMPONENTS: z
+    .string()
+    .default("ejs:github")
+    .transform(parseCsvEnv),
   
   // generic network retry knobs. you sholdn't touch this (unless needed)
   NETWORK_FETCH_INFO_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
