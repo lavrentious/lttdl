@@ -11,6 +11,7 @@ export type MusicSearchResult = {
 
 export type MusicSearchOptions = {
   signal?: AbortSignal;
+  useCookies?: boolean;
 };
 
 export interface MusicProvider {

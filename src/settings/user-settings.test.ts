@@ -10,6 +10,7 @@ import {
   parseMusicSearchProviderInput,
   parseYoutubePresetInput,
   updateUserMusicSearchProvider,
+  updateUserMusicSearchWithCookies,
   updateUserTiktokProviders,
   updateUserVerboseOutput,
   updateUserYoutubePreset,
@@ -63,6 +64,12 @@ describe("user settings", () => {
     expect(settings.platformPreferences.music.searchProvider).toBe("youtube-music");
   });
 
+  test("returns music search cookies default", () => {
+    const settings = getDefaultUserSettings();
+
+    expect(settings.platformPreferences.music.searchWithCookies).toBe(false);
+  });
+
   test("parses invalid youtube preset as default", () => {
     expect(parseYoutubePresetInput("invalid")).toBe("auto-video-audio");
   });
@@ -83,24 +90,28 @@ describe("user settings", () => {
     const userId = 101;
     updateUserYoutubePreset(userId, "mid-audio");
     updateUserMusicSearchProvider(userId, "youtube-music");
+    updateUserMusicSearchWithCookies(userId, true);
 
     const updated = updateUserVerboseOutput(userId, true);
 
     expect(updated.verboseOutput).toBe(true);
     expect(updated.platformPreferences.youtube.preset).toBe("mid-audio");
     expect(updated.platformPreferences.music.searchProvider).toBe("youtube-music");
+    expect(updated.platformPreferences.music.searchWithCookies).toBe(true);
   });
 
   test("preserves youtube preset when updating tiktok providers", () => {
     const userId = 102;
     updateUserYoutubePreset(userId, "fast-720");
     updateUserMusicSearchProvider(userId, "youtube-music");
+    updateUserMusicSearchWithCookies(userId, true);
 
     const updated = updateUserTiktokProviders(userId, ["v1", "v2"]);
 
     expect(updated.platformPreferences.tiktok.providers).toEqual(["v1", "v2"]);
     expect(updated.platformPreferences.youtube.preset).toBe("fast-720");
     expect(updated.platformPreferences.music.searchProvider).toBe("youtube-music");
+    expect(updated.platformPreferences.music.searchWithCookies).toBe(true);
   });
 
   test("persists youtube preset updates", () => {
@@ -119,6 +130,15 @@ describe("user settings", () => {
     const settings = getUserSettings(userId);
 
     expect(settings.platformPreferences.music.searchProvider).toBe("youtube");
+  });
+
+  test("persists music search cookies updates", () => {
+    const userId = 105;
+    updateUserMusicSearchWithCookies(userId, true);
+
+    const settings = getUserSettings(userId);
+
+    expect(settings.platformPreferences.music.searchWithCookies).toBe(true);
   });
 });
 

@@ -9,13 +9,17 @@ import type { DownloadProgress } from "src/dl/types";
 export const YT_DLP_BINARY = "yt-dlp";
 export const YT_DLP_COMMON_ARGS = ["--js-runtimes", "bun"] as const;
 
-export function buildYtDlpArgs(...args: string[]): string[] {
+export function buildYtDlpArgs(
+  args: string[],
+  options: { includeCookies?: boolean } = {},
+): string[] {
   const cookiesPath = config.get("YT_DLP_COOKIES_PATH");
+  const includeCookies = options.includeCookies ?? true;
 
   return [
     YT_DLP_BINARY,
     ...YT_DLP_COMMON_ARGS,
-    ...(cookiesPath ? ["--cookies", cookiesPath] : []),
+    ...(includeCookies && cookiesPath ? ["--cookies", cookiesPath] : []),
     ...args,
   ];
 }

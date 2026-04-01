@@ -486,6 +486,7 @@ async function runMusicSearch(
   try {
     const results = await searchMusic(provider, query, musicSearchLimit, {
       signal: operation.controller.signal,
+      useCookies: userSettings.platformPreferences.music.searchWithCookies,
     });
     completeTrackedOperation(operation.id);
     const token = randomUUIDv7();

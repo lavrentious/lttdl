@@ -23,6 +23,7 @@ import type { YoutubePreset } from "src/dl/types";
 import {
   getUserSettings,
   updateUserMusicSearchProvider,
+  updateUserMusicSearchWithCookies,
   updateUserTiktokProviders,
   updateUserVerboseOutput,
   updateUserYoutubePreset,
@@ -51,12 +52,14 @@ function formatMainSettingsMessage(userId: number): string {
     `verbose output controls whether the bot sends link details after successful downloads.\n` +
     `tiktok providers choose the internal extraction paths for tiktok links.\n` +
     `youtube preset chooses how youtube links are downloaded with yt-dlp.\n\n` +
-    `music search provider chooses whether /music searches the YouTube Music songs section or regular YouTube videos before downloading.\n\n` +
+    `music search provider chooses whether /music searches the YouTube Music songs section or regular YouTube videos before downloading.\n` +
+    `music search cookies controls whether /music search runs yt-dlp with --cookies. this can help with restricted results, but it is slower.\n\n` +
     `*current*\n` +
     `verbose: ${settings.verboseOutput ? "on" : "off"}\n` +
     `tiktok providers: ${settings.platformPreferences.tiktok.providers.join(", ")}\n` +
     `youtube preset: ${YOUTUBE_PRESET_LABELS[settings.platformPreferences.youtube.preset]}\n` +
-    `music search provider: ${MUSIC_SEARCH_PROVIDER_LABELS[settings.platformPreferences.music.searchProvider]}`
+    `music search provider: ${MUSIC_SEARCH_PROVIDER_LABELS[settings.platformPreferences.music.searchProvider]}\n` +
+    `music search cookies: ${settings.platformPreferences.music.searchWithCookies ? "on" : "off"}`
   );
 }
 
@@ -121,6 +124,11 @@ function buildMainSettingsKeyboard(userId: number): InlineKeyboard {
     .text(
       "music search provider >>",
       `${SETTINGS_CALLBACK_PREFIX}:music_provider:${userId}`,
+    )
+    .row()
+    .text(
+      `music search cookies ${icon(settings.platformPreferences.music.searchWithCookies)}`,
+      `${SETTINGS_CALLBACK_PREFIX}:toggle_music_search_cookies:${userId}`,
     );
 }
 
@@ -210,7 +218,8 @@ function parseCallbackData(data: string):
         | "providers"
         | "youtube_preset"
         | "music_provider"
-        | "toggle_verbose";
+        | "toggle_verbose"
+        | "toggle_music_search_cookies";
       userId: number;
     }
   | {
@@ -244,7 +253,8 @@ function parseCallbackData(data: string):
     parts[1] === "providers" ||
     parts[1] === "youtube_preset" ||
     parts[1] === "music_provider" ||
-    parts[1] === "toggle_verbose"
+    parts[1] === "toggle_verbose" ||
+    parts[1] === "toggle_music_search_cookies"
   ) {
     return { action: parts[1], userId };
   }
@@ -333,6 +343,17 @@ export async function settingsCallbackQuery(
   if (parsed.action === "toggle_verbose") {
     const settings = getUserSettings(parsed.userId);
     updateUserVerboseOutput(parsed.userId, !settings.verboseOutput);
+    await editSettingsMessage(ctx, "main", parsed.userId);
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  if (parsed.action === "toggle_music_search_cookies") {
+    const settings = getUserSettings(parsed.userId);
+    updateUserMusicSearchWithCookies(
+      parsed.userId,
+      !settings.platformPreferences.music.searchWithCookies,
+    );
     await editSettingsMessage(ctx, "main", parsed.userId);
     await ctx.answerCallbackQuery();
     return;

@@ -55,7 +55,7 @@ function createBot() {
         "this is a bot for downloading tiktoks without watermarks, youtube media, pinterest pins/boards, instagram posts/reels, and searched music. no ads, no spam, no sponsors.\n" +
         "send a tiktok/youtube/pinterest/instagram link and get the media.\n" +
         "send text query to search tracks and download one as mp3 (or use /music <query>).\n" +
-        "use /settings to configure verbose output, tiktok providers, youtube preset, and music search provider.",
+        "use /settings to configure verbose output, tiktok providers, youtube preset, music search provider, and music search cookies.",
     ),
   );
   bot.command("settings", settingsCommand);

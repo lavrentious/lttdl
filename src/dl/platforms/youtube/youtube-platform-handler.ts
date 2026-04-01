@@ -134,11 +134,11 @@ async function fetchMetadata(
   signal?: AbortSignal,
 ): Promise<YoutubeMetadata> {
   const { exitCode, stdout, stderr } = await runCommandImpl(
-    buildYtDlpArgs(
+    buildYtDlpArgs([
       "--no-playlist",
       "--dump-single-json",
       url,
-    ),
+    ]),
     {
       timeoutMs: config.get("YT_DLP_YOUTUBE_METADATA_TIMEOUT_MS"),
       timeoutLabel: "yt-dlp youtube metadata fetch",
@@ -490,7 +490,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
         `youtube preset=${preset}, tempDir=${tempDir}, outputTemplate=${outputTemplate}`,
       );
       const { exitCode, stdout, stderr } = await this.deps.runCommand(
-        buildYtDlpArgs(
+        buildYtDlpArgs([
           "--no-playlist",
           "--print-json",
           "--progress",
@@ -502,7 +502,7 @@ export class YoutubePlatformHandler implements PlatformHandler {
           ...plan.formatArgs,
           ...plan.postprocessArgs,
           url,
-        ),
+        ]),
         {
           onStdoutLine: async (line) => {
             await emitProgressFromYtDlpLine(line, options?.onProgress);

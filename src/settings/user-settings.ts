@@ -29,6 +29,7 @@ export type UserSettings = {
     };
     music: {
       searchProvider: MusicSearchProviderId;
+      searchWithCookies: boolean;
     };
   };
 };
@@ -38,6 +39,7 @@ type UserSettingsRow = {
   tiktok_providers: string;
   youtube_preset: string;
   music_search_provider: string;
+  music_search_with_cookies: number;
 };
 
 const DEFAULT_TIKTOK_PROVIDERS: TiktokProvider[] = ["v2"];
@@ -52,6 +54,7 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
     },
     music: {
       searchProvider: DEFAULT_MUSIC_SEARCH_PROVIDER,
+      searchWithCookies: false,
     },
   },
 };
@@ -98,6 +101,10 @@ function normalizeMusicSearchProvider(value: string): MusicSearchProviderId {
     : DEFAULT_MUSIC_SEARCH_PROVIDER;
 }
 
+function normalizeBoolean(value: unknown): boolean {
+  return value === true || value === 1 || value === "1";
+}
+
 function getDbOrThrow(): Database {
   if (!db) {
     throw new Error("user settings database is not initialized");
@@ -130,6 +137,7 @@ function rowToUserSettings(row: UserSettingsRow): UserSettings {
       },
       music: {
         searchProvider: normalizeMusicSearchProvider(row.music_search_provider),
+        searchWithCookies: normalizeBoolean(row.music_search_with_cookies),
       },
     },
   };
@@ -153,6 +161,12 @@ function ensureUserSettingsColumns(database: Database) {
       ALTER TABLE user_settings ADD COLUMN music_search_provider TEXT NOT NULL DEFAULT 'youtube-music';
     `);
   } catch {}
+
+  try {
+    database.exec(`
+      ALTER TABLE user_settings ADD COLUMN music_search_with_cookies INTEGER NOT NULL DEFAULT 0;
+    `);
+  } catch {}
 }
 
 function upsertUserSettings(userId: number, nextSettings: UserSettings): UserSettings {
@@ -165,14 +179,16 @@ function upsertUserSettings(userId: number, nextSettings: UserSettings): UserSet
           tiktok_providers,
           youtube_preset,
           music_search_provider,
+          music_search_with_cookies,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(user_id) DO UPDATE SET
           verbose_output = excluded.verbose_output,
           tiktok_providers = excluded.tiktok_providers,
           youtube_preset = excluded.youtube_preset,
           music_search_provider = excluded.music_search_provider,
+          music_search_with_cookies = excluded.music_search_with_cookies,
           updated_at = CURRENT_TIMESTAMP
       `,
     )
@@ -182,6 +198,7 @@ function upsertUserSettings(userId: number, nextSettings: UserSettings): UserSet
       JSON.stringify(nextSettings.platformPreferences.tiktok.providers),
       nextSettings.platformPreferences.youtube.preset,
       nextSettings.platformPreferences.music.searchProvider,
+      Number(nextSettings.platformPreferences.music.searchWithCookies),
     );
 
   return getUserSettings(userId);
@@ -200,6 +217,7 @@ export function initUserSettingsDb() {
       tiktok_providers TEXT NOT NULL DEFAULT '["v2"]',
       youtube_preset TEXT NOT NULL DEFAULT 'auto-video-audio',
       music_search_provider TEXT NOT NULL DEFAULT 'youtube-music',
+      music_search_with_cookies INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -219,6 +237,8 @@ export function getDefaultUserSettings(): UserSettings {
       },
       music: {
         searchProvider: DEFAULT_USER_SETTINGS.platformPreferences.music.searchProvider,
+        searchWithCookies:
+          DEFAULT_USER_SETTINGS.platformPreferences.music.searchWithCookies,
       },
     },
   };
@@ -227,7 +247,7 @@ export function getDefaultUserSettings(): UserSettings {
 export function getUserSettings(userId: number): UserSettings {
   const row = getDbOrThrow()
     .query(
-      "SELECT verbose_output, tiktok_providers, youtube_preset, music_search_provider FROM user_settings WHERE user_id = ?",
+      "SELECT verbose_output, tiktok_providers, youtube_preset, music_search_provider, music_search_with_cookies FROM user_settings WHERE user_id = ?",
     )
     .get(userId) as UserSettingsRow | null;
 
@@ -296,6 +316,25 @@ export function updateUserMusicSearchProvider(
       ...current.platformPreferences,
       music: {
         searchProvider: normalizeMusicSearchProvider(searchProvider),
+        searchWithCookies: current.platformPreferences.music.searchWithCookies,
+      },
+    },
+  });
+}
+
+export function updateUserMusicSearchWithCookies(
+  userId: number,
+  searchWithCookies: boolean,
+): UserSettings {
+  const current = getUserSettings(userId);
+
+  return upsertUserSettings(userId, {
+    ...current,
+    platformPreferences: {
+      ...current.platformPreferences,
+      music: {
+        searchProvider: current.platformPreferences.music.searchProvider,
+        searchWithCookies: normalizeBoolean(searchWithCookies),
       },
     },
   });

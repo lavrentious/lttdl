@@ -89,8 +89,7 @@ describe("YoutubeMusicProvider", () => {
 
     const results = await provider.search("daft punk", 5);
 
-    expect(executedCommand).toContain("--cookies");
-    expect(executedCommand).toContain(path.join(os.tmpdir(), "lttdl-cookies.txt"));
+    expect(executedCommand).not.toContain("--cookies");
     expect(executedCommand).not.toContain("--flat-playlist");
     expect(executedCommand).toContain("--playlist-items");
     expect(executedCommand).toContain("1:5");
@@ -112,6 +111,40 @@ describe("YoutubeMusicProvider", () => {
         durationSeconds: 205,
       },
     ]);
+  });
+
+  test("includes cookies during music search when explicitly enabled", async () => {
+    let executedCommand: string[] = [];
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
+      },
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async () => {},
+        runCommand: async (cmd) => {
+          executedCommand = cmd;
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              entries: [
+                {
+                  id: "track-1",
+                  title: "Track 1",
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        },
+      },
+    );
+
+    await provider.search("daft punk", 5, { useCookies: true });
+
+    expect(executedCommand).toContain("--cookies");
+    expect(executedCommand).toContain(path.join(os.tmpdir(), "lttdl-cookies.txt"));
   });
 
   test("falls back to channel name when artist metadata is missing", async () => {
