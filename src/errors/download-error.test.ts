@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   DownloadError,
+  getUserFacingDownloadErrorMessage,
   isCancelledError,
   isTimeoutError,
   OperationCancelledError,
+  sanitizeDownloadErrorMessage,
   toDownloadError,
 } from "./download-error";
 
@@ -48,5 +50,42 @@ describe("isCancelledError", () => {
     expect(isCancelledError(new OperationCancelledError("operation cancelled"))).toBe(true);
     expect(isCancelledError(new Error("download cancelled by user"))).toBe(true);
     expect(isCancelledError(new Error("request timeout"))).toBe(false);
+  });
+});
+
+describe("sanitizeDownloadErrorMessage", () => {
+  test("maps yt-dlp cookie auth errors to a settings hint", () => {
+    const message =
+      "ERROR: [youtube] abc: Sign in to confirm your age. This video may be inappropriate for some users. " +
+      "Use --cookies-from-browser or --cookies for the authentication.\n" +
+      "ERROR: [youtube] def: Sign in to confirm your age. This video may be inappropriate for some users. " +
+      "Use --cookies-from-browser or --cookies for the authentication.";
+
+    expect(sanitizeDownloadErrorMessage(message)).toBe(
+      "some results require authentication. enable music search cookies in /settings and try again.",
+    );
+  });
+
+  test("keeps only the first yt-dlp error line for user-facing output", () => {
+    const message =
+      "WARNING: noisy warning\n" +
+      "ERROR: [youtube] abc: Requested format is not available. Use --list-formats for a list of available formats\n" +
+      "ERROR: [youtube] def: Requested format is not available.";
+
+    expect(sanitizeDownloadErrorMessage(message)).toBe(
+      "[youtube] abc: Requested format is not available. Use --list-formats for a list of available formats",
+    );
+  });
+});
+
+describe("getUserFacingDownloadErrorMessage", () => {
+  test("sanitizes download errors for user replies", () => {
+    const error = new DownloadError(
+      "ERROR: [youtube] abc: Sign in to confirm your age. Use --cookies for the authentication.",
+    );
+
+    expect(getUserFacingDownloadErrorMessage(error)).toBe(
+      "some results require authentication. enable music search cookies in /settings and try again.",
+    );
   });
 });

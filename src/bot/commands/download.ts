@@ -25,7 +25,10 @@ import {
   type VideoVariant,
 } from "src/dl/downloader";
 import type { DownloadProgress } from "src/dl/types";
-import { isCancelledError, toDownloadError } from "src/errors/download-error";
+import {
+  getUserFacingDownloadErrorMessage,
+  isCancelledError,
+} from "src/errors/download-error";
 import {
   getDefaultUserSettings,
   getUserSettings,
@@ -546,7 +549,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       logger.info(`cancelled download ${query} for ${ctx.from?.id ?? "unknown user"}`);
     } else {
       logError(err);
-      const errMsg = toDownloadError(err).message;
+      const errMsg = getUserFacingDownloadErrorMessage(err);
       ctx.api.deleteMessage(msg1.chat.id, msg1.message_id).catch();
       ctx.reply(`failed to download: ${errMsg}`);
     }

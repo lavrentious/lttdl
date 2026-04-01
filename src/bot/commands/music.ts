@@ -28,8 +28,8 @@ import {
 import type { DownloadProgress, MusicVariant } from "src/dl/types";
 import {
   DownloadError,
+  getUserFacingDownloadErrorMessage,
   isCancelledError,
-  toDownloadError,
 } from "src/errors/download-error";
 import { getUserSettings } from "src/settings/user-settings";
 import { config } from "src/utils/env-validation";
@@ -510,7 +510,7 @@ async function runMusicSearch(
     } else {
       logError(err);
       deleteMessageSafe(ctx, loadingMessage);
-      const errMsg = toDownloadError(err).message;
+      const errMsg = getUserFacingDownloadErrorMessage(err);
       await ctx.reply(`failed to search music: ${errMsg}`);
     }
   } finally {
@@ -671,7 +671,7 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
     } else {
       logError(err);
       deleteMessageSafe(ctx, loadingMessage);
-      const errMsg = toDownloadError(err).message;
+      const errMsg = getUserFacingDownloadErrorMessage(err);
       await ctx.reply(`failed to download: ${errMsg}`);
     }
   } finally {
