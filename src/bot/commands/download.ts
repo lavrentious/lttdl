@@ -36,7 +36,7 @@ import {
 import { chunkArray } from "src/utils/array";
 import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
-import { isHttpURL } from "src/utils/utils";
+import { extractHttpURL, isHttpURL } from "src/utils/utils";
 import {
   buildGalleryLinksMessages,
   buildImageLinksMessages,
@@ -288,15 +288,17 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
   const maxFileSizeMb = config.get("BOT_MAX_FILE_SIZE_MB");
   const maxFileSize = maxFileSizeMb * 1024 * 1024;
   const maxActiveJobsPerUser = config.get("BOT_MAX_ACTIVE_JOBS_PER_USER");
-  const query = ctx.message.text;
-  if (!query) {
+  const text = ctx.message.text;
+  if (!text) {
     await next();
     return;
   }
 
-  if (!isHttpURL(query)) {
-    if (shouldFallbackToMusicSearch(query)) {
-      await musicSearchFromMessage(ctx, query.trim());
+  const query = isHttpURL(text) ? text : extractHttpURL(text);
+
+  if (!query) {
+    if (shouldFallbackToMusicSearch(text)) {
+      await musicSearchFromMessage(ctx, text.trim());
       return;
     }
 

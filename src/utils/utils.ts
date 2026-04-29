@@ -9,6 +9,11 @@ export function isHttpURL(str: string): boolean {
   }
 }
 
+export function extractHttpURL(str: string): string | null {
+  const match = str.match(/https?:\/\/\S+/);
+  return match ? match[0]! : null;
+}
+
 export function fileSizeToHumanReadable(size: number) {
   const i = Math.floor(Math.log(size) / Math.log(1024));
   return (
