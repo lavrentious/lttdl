@@ -29,6 +29,7 @@ import {
   getUserFacingDownloadErrorMessage,
   isCancelledError,
 } from "src/errors/download-error";
+import { createAndShareZip, shareFile } from "src/file-share/file-share";
 import {
   getDefaultUserSettings,
   getUserSettings,
@@ -37,7 +38,6 @@ import { chunkArray } from "src/utils/array";
 import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
 import { extractHttpURL, isHttpURL } from "src/utils/utils";
-import { shareFile } from "src/file-share/file-share";
 import {
   buildGalleryLinksMessages,
   buildImageLinksMessages,
@@ -60,9 +60,31 @@ async function sendShareUrls(
     ttlS >= 3600
       ? `${Math.round(ttlS / 3600)}h`
       : `${Math.round(ttlS / 60)}min`;
-  const lines = urls.map(u => `<a href="${u}">${u}</a>`).join("\n");
+  const lines = urls.map((u) => `<a href="${u}">${u}</a>`).join("\n");
   await ctx.reply(
     `direct download link${urls.length > 1 ? "s" : ""} (expires in ${ttlLabel}):\n${lines}`,
+    { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
+  );
+}
+
+async function sendGalleryShareUrls(
+  ctx: Filter<Context, "message">,
+  results: Array<{ label: number; url: string }>,
+  zipUrl: string | null,
+): Promise<void> {
+  if (!results.length && !zipUrl) return;
+  const ttlS = config.get("FILE_SHARE_TTL_S");
+  const ttlLabel =
+    ttlS >= 3600
+      ? `${Math.round(ttlS / 3600)}h`
+      : `${Math.round(ttlS / 60)}min`;
+    
+  const lines = results.map(
+    ({ label, url }) => `${label}. <a href="${url}">${url}</a>`,
+  );
+  if (zipUrl) lines.push(`\nzip: <a href="${zipUrl}">${zipUrl}</a>`);
+  await ctx.reply(
+    `direct download links (expires in ${ttlLabel}):\n${lines.join("\n")}`,
     { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
   );
 }
@@ -265,7 +287,7 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
   const maxFileSize = maxFileSizeMb * 1024 * 1024;
   const allDownloadedPaths = variants
     .filter((v): v is Extract<T, { downloaded: true }> => v.downloaded)
-    .map(v => v.path);
+    .map((v) => v.path);
   const validFiles = variants
     .filter((file): file is Extract<T, { downloaded: true }> => file.downloaded)
     .filter((file) => file.size <= maxFileSize);
@@ -446,13 +468,18 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             ),
           );
         });
-      const downloadedImagePaths: string[] = [];
-      for (const imgVariants of res.variants) {
-        for (const v of imgVariants) {
-          if (v.downloaded) downloadedImagePaths.push(v.path);
+      // one best downloaded variant per image, labelled by 1-based position
+      const imageShareFiles: Array<{ label: number; path: string }> = [];
+      for (let i = 0; i < res.variants.length; i++) {
+        for (const v of res.variants[i]!) {
+          if (v.downloaded) {
+            imageShareFiles.push({ label: i + 1, path: v.path });
+            break;
+          }
         }
       }
-      const imageShareUrls: string[] = [];
+      const imageShareResults: Array<{ label: number; url: string }> = [];
+      let imageZipUrl: string | null = null;
       let uploadFailed = false;
       try {
         for (const chunk of chunkArray(media, MAX_MEDIA_GROUP_SIZE)) {
@@ -462,10 +489,13 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         uploadFailed = true;
         logError(err);
       } finally {
-        for (const p of downloadedImagePaths) {
-          const url = await shareFile(p);
-          if (url) imageShareUrls.push(url);
+        for (const { label, path } of imageShareFiles) {
+          const url = await shareFile(path);
+          if (url) imageShareResults.push({ label, url });
         }
+        imageZipUrl = await createAndShareZip(
+          imageShareFiles.map((f) => f.path),
+        );
         cleanup();
         deleteMessageSafe(ctx, msg1);
         deleteMessageSafe(ctx, msg2);
@@ -476,7 +506,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
           `images were downloaded, but Telegram rejected the upload. sending links instead.`,
         );
         await sendChunkedLinks(ctx, imageLinks);
-        await sendShareUrls(ctx, imageShareUrls);
+        await sendGalleryShareUrls(ctx, imageShareResults, imageZipUrl);
         await next();
         return;
       }
@@ -484,7 +514,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       if (userSettings.verboseOutput) {
         await sendChunkedLinks(ctx, imageLinks);
       }
-      await sendShareUrls(ctx, imageShareUrls);
+      await sendGalleryShareUrls(ctx, imageShareResults, imageZipUrl);
     } else if (res.contentType === "music") {
       const uploadedFile = res.variants.find(
         (file): file is Extract<MusicVariant, { downloaded: true }> =>
@@ -542,19 +572,27 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             (index) => !uploadableMedia.some((entry) => entry.index === index),
           ),
       );
-      const downloadedGalleryPaths: string[] = [];
-      for (const entry of res.entries) {
+      // one downloaded file per entry, labelled by 1-based entry position
+      const galleryShareFiles: Array<{ label: number; path: string }> = [];
+      for (let i = 0; i < res.entries.length; i++) {
+        const entry = res.entries[i]!;
         for (const v of entry.variants) {
-          if (v.downloaded) downloadedGalleryPaths.push(v.path);
+          if (v.downloaded) {
+            galleryShareFiles.push({ label: i + 1, path: v.path });
+            break;
+          }
         }
       }
 
       if (!uploadableMedia.length) {
-        const galleryShareUrls: string[] = [];
-        for (const p of downloadedGalleryPaths) {
-          const url = await shareFile(p);
-          if (url) galleryShareUrls.push(url);
+        const galleryShareResults: Array<{ label: number; url: string }> = [];
+        for (const { label, path } of galleryShareFiles) {
+          const url = await shareFile(path);
+          if (url) galleryShareResults.push({ label, url });
         }
+        const galleryZipUrl = await createAndShareZip(
+          galleryShareFiles.map((f) => f.path),
+        );
         cleanup();
         deleteMessageSafe(ctx, msg1);
         deleteMessageSafe(ctx, msg2);
@@ -562,12 +600,13 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
           `pinterest items were resolved, but nothing uploadable was produced. sending links instead.`,
         );
         await sendChunkedLinks(ctx, galleryLinks);
-        await sendShareUrls(ctx, galleryShareUrls);
+        await sendGalleryShareUrls(ctx, galleryShareResults, galleryZipUrl);
         await next();
         return;
       }
 
-      const galleryShareUrls: string[] = [];
+      const galleryShareResults: Array<{ label: number; url: string }> = [];
+      let galleryZipUrl: string | null = null;
       let uploadFailed = false;
       try {
         await ctx.api.sendChatAction(msg1.chat.id, "upload_photo");
@@ -578,10 +617,13 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         uploadFailed = true;
         logError(err);
       } finally {
-        for (const p of downloadedGalleryPaths) {
-          const url = await shareFile(p);
-          if (url) galleryShareUrls.push(url);
+        for (const { label, path } of galleryShareFiles) {
+          const url = await shareFile(path);
+          if (url) galleryShareResults.push({ label, url });
         }
+        galleryZipUrl = await createAndShareZip(
+          galleryShareFiles.map((f) => f.path),
+        );
         cleanup();
         deleteMessageSafe(ctx, msg1);
         deleteMessageSafe(ctx, msg2);
@@ -592,7 +634,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
           `pinterest items were downloaded, but Telegram rejected the upload. sending links instead.`,
         );
         await sendChunkedLinks(ctx, galleryLinks);
-        await sendShareUrls(ctx, galleryShareUrls);
+        await sendGalleryShareUrls(ctx, galleryShareResults, galleryZipUrl);
         await next();
         return;
       }
@@ -610,7 +652,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       if (userSettings.verboseOutput) {
         await sendChunkedLinks(ctx, galleryLinks);
       }
-      await sendShareUrls(ctx, galleryShareUrls);
+      await sendGalleryShareUrls(ctx, galleryShareResults, galleryZipUrl);
     }
 
     await next();
@@ -619,7 +661,9 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       completeTrackedOperation(operation.id);
     }
     if (isCancelledError(err)) {
-      logger.info(`cancelled download ${query} for ${ctx.from?.id ?? "unknown user"}`);
+      logger.info(
+        `cancelled download ${query} for ${ctx.from?.id ?? "unknown user"}`,
+      );
     } else {
       logError(err);
       const errMsg = getUserFacingDownloadErrorMessage(err);
