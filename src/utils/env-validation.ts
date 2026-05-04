@@ -57,6 +57,16 @@ export const envSchema = z.object({
 
   // don't touch. Telegram default for bots, or see https://grammy.dev/guide/files#file-size-limits idk
   BOT_MAX_FILE_SIZE_MB: z.coerce.number().int().positive().default(50),
+
+  // file share (off by default). two modes:
+  //   proxy   — serve FILE_SHARE_DIR yourself (nginx, caddy, etc.)
+  //   builtin — bun serves files internally on FILE_SHARE_SERVER_PORT
+  FILE_SHARE_ENABLED: z.string().default("false").transform(v => v === "true" || v === "1"),
+  FILE_SHARE_BASE_URL: z.string().optional(),
+  FILE_SHARE_DIR: z.string().default("./shared"),
+  FILE_SHARE_TTL_S: z.coerce.number().int().positive().default(60 * 60),
+  FILE_SHARE_SERVER_MODE: z.enum(["proxy", "builtin"]).default("proxy"),
+  FILE_SHARE_SERVER_PORT: z.coerce.number().int().positive().default(3000),
 });
 
 export type Env = z.infer<typeof envSchema>;

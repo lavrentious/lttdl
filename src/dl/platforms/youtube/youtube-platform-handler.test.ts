@@ -47,6 +47,11 @@ config.init({
   VIDEO_FFPROBE_TIMEOUT_MS: 15000,
   VIDEO_FFMPEG_TIMEOUT_MS: 600000,
   IMAGE_PROCESS_TIMEOUT_MS: 15000,
+  FILE_SHARE_ENABLED: false,
+  FILE_SHARE_DIR: "./shared",
+  FILE_SHARE_TTL_S: 600,
+  FILE_SHARE_SERVER_MODE: "proxy" as const,
+  FILE_SHARE_SERVER_PORT: 3000,
 });
 
 describe("YoutubePlatformHandler", () => {

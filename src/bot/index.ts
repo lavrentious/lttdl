@@ -1,5 +1,6 @@
 import { run, type RunnerHandle } from "@grammyjs/runner";
 import { Bot } from "grammy";
+import { initFileShare } from "src/file-share/file-share";
 import { initUserSettingsDb } from "src/settings/user-settings";
 import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
@@ -46,6 +47,13 @@ function startupCheck() {
 function createBot() {
   startupCheck();
   initUserSettingsDb();
+  try {
+    initFileShare();
+  } catch (err) {
+    logError(err);
+    logger.error("file-share initialization failed");
+    process.exit(1);
+  }
 
   const bot = new Bot(config.get("BOT_TOKEN"));
 

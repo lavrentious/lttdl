@@ -37,6 +37,7 @@ import { chunkArray } from "src/utils/array";
 import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
 import { extractHttpURL, isHttpURL } from "src/utils/utils";
+import { shareFile } from "src/file-share/file-share";
 import {
   buildGalleryLinksMessages,
   buildImageLinksMessages,
@@ -48,6 +49,23 @@ import {
 import { musicSearchFromMessage, shouldFallbackToMusicSearch } from "./music";
 
 const MAX_MEDIA_GROUP_SIZE = 10;
+
+async function sendShareUrls(
+  ctx: Filter<Context, "message">,
+  urls: string[],
+): Promise<void> {
+  if (!urls.length) return;
+  const ttlS = config.get("FILE_SHARE_TTL_S");
+  const ttlLabel =
+    ttlS >= 3600
+      ? `${Math.round(ttlS / 3600)}h`
+      : `${Math.round(ttlS / 60)}min`;
+  const lines = urls.map(u => `<a href="${u}">${u}</a>`).join("\n");
+  await ctx.reply(
+    `direct download link${urls.length > 1 ? "s" : ""} (expires in ${ttlLabel}):\n${lines}`,
+    { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
+  );
+}
 
 function deleteMessageSafe(
   ctx: Filter<Context, "message">,
@@ -227,6 +245,7 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
   links,
   verboseOutput,
   cleanup,
+  onBeforeCleanup,
   sendMedia,
 }: {
   ctx: Filter<Context, "message">;
@@ -239,10 +258,14 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
   links: string[];
   verboseOutput: boolean;
   cleanup: () => void;
+  onBeforeCleanup?: (paths: string[]) => Promise<void>;
   sendMedia: (variant: Extract<T, { downloaded: true }>) => Promise<unknown>;
 }): Promise<void> {
   const maxFileSizeMb = config.get("BOT_MAX_FILE_SIZE_MB");
   const maxFileSize = maxFileSizeMb * 1024 * 1024;
+  const allDownloadedPaths = variants
+    .filter((v): v is Extract<T, { downloaded: true }> => v.downloaded)
+    .map(v => v.path);
   const validFiles = variants
     .filter((file): file is Extract<T, { downloaded: true }> => file.downloaded)
     .filter((file) => file.size <= maxFileSize);
@@ -252,6 +275,7 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
     deleteMessageSafe(ctx, loadingMessage);
     await ctx.reply(fallbackText);
     await sendChunkedLinks(ctx, links);
+    await onBeforeCleanup?.(allDownloadedPaths).catch(() => {});
     cleanup();
     return;
   }
@@ -265,6 +289,7 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
     uploadFailed = true;
     logError(err);
   } finally {
+    await onBeforeCleanup?.(allDownloadedPaths).catch(() => {});
     cleanup();
     deleteMessageSafe(ctx, loadingMessage);
     deleteMessageSafe(ctx, progressMessage);
@@ -372,6 +397,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       const links = res.variants.map((file) =>
         generateVideoLinksEntry(file, uploadedFile),
       );
+      const videoShareUrls: string[] = [];
       await sendSingleMediaResult({
         ctx,
         loadingMessage: msg1,
@@ -383,6 +409,12 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         links,
         verboseOutput: userSettings.verboseOutput,
         cleanup,
+        onBeforeCleanup: async (paths) => {
+          for (const p of paths) {
+            const url = await shareFile(p);
+            if (url) videoShareUrls.push(url);
+          }
+        },
         sendMedia: (variant) =>
           ctx.replyWithVideo(new InputFile(variant.path), {
             width: variant.payload.resolution.width,
@@ -391,8 +423,8 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             supports_streaming: true,
           }),
       });
-
       logger.info(`sent video ${query} to ${ctx.from?.id ?? "unknown user"}`);
+      await sendShareUrls(ctx, videoShareUrls);
     } else if (res.contentType === "image") {
       const msg2 = await ctx.reply(
         res.variants.length > 1
@@ -414,6 +446,13 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             ),
           );
         });
+      const downloadedImagePaths: string[] = [];
+      for (const imgVariants of res.variants) {
+        for (const v of imgVariants) {
+          if (v.downloaded) downloadedImagePaths.push(v.path);
+        }
+      }
+      const imageShareUrls: string[] = [];
       let uploadFailed = false;
       try {
         for (const chunk of chunkArray(media, MAX_MEDIA_GROUP_SIZE)) {
@@ -423,6 +462,10 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         uploadFailed = true;
         logError(err);
       } finally {
+        for (const p of downloadedImagePaths) {
+          const url = await shareFile(p);
+          if (url) imageShareUrls.push(url);
+        }
         cleanup();
         deleteMessageSafe(ctx, msg1);
         deleteMessageSafe(ctx, msg2);
@@ -433,6 +476,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
           `images were downloaded, but Telegram rejected the upload. sending links instead.`,
         );
         await sendChunkedLinks(ctx, imageLinks);
+        await sendShareUrls(ctx, imageShareUrls);
         await next();
         return;
       }
@@ -440,6 +484,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       if (userSettings.verboseOutput) {
         await sendChunkedLinks(ctx, imageLinks);
       }
+      await sendShareUrls(ctx, imageShareUrls);
     } else if (res.contentType === "music") {
       const uploadedFile = res.variants.find(
         (file): file is Extract<MusicVariant, { downloaded: true }> =>
@@ -448,6 +493,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       const links = res.variants.map((file) =>
         generateMusicLinksEntry(file, uploadedFile),
       );
+      const musicShareUrls: string[] = [];
       await sendSingleMediaResult({
         ctx,
         loadingMessage: msg1,
@@ -459,6 +505,12 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         links,
         verboseOutput: userSettings.verboseOutput,
         cleanup,
+        onBeforeCleanup: async (paths) => {
+          for (const p of paths) {
+            const url = await shareFile(p);
+            if (url) musicShareUrls.push(url);
+          }
+        },
         sendMedia: (variant) =>
           ctx.replyWithAudio(
             new InputFile(
@@ -475,8 +527,8 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             },
           ),
       });
-
       logger.info(`sent audio ${query} to ${ctx.from?.id ?? "unknown user"}`);
+      await sendShareUrls(ctx, musicShareUrls);
     } else if (res.contentType === "gallery") {
       const msg2 = await ctx.reply(
         `pinterest items downloaded, sending... (${res.entries.length} items)`,
@@ -490,8 +542,19 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             (index) => !uploadableMedia.some((entry) => entry.index === index),
           ),
       );
+      const downloadedGalleryPaths: string[] = [];
+      for (const entry of res.entries) {
+        for (const v of entry.variants) {
+          if (v.downloaded) downloadedGalleryPaths.push(v.path);
+        }
+      }
 
       if (!uploadableMedia.length) {
+        const galleryShareUrls: string[] = [];
+        for (const p of downloadedGalleryPaths) {
+          const url = await shareFile(p);
+          if (url) galleryShareUrls.push(url);
+        }
         cleanup();
         deleteMessageSafe(ctx, msg1);
         deleteMessageSafe(ctx, msg2);
@@ -499,10 +562,12 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
           `pinterest items were resolved, but nothing uploadable was produced. sending links instead.`,
         );
         await sendChunkedLinks(ctx, galleryLinks);
+        await sendShareUrls(ctx, galleryShareUrls);
         await next();
         return;
       }
 
+      const galleryShareUrls: string[] = [];
       let uploadFailed = false;
       try {
         await ctx.api.sendChatAction(msg1.chat.id, "upload_photo");
@@ -513,6 +578,10 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         uploadFailed = true;
         logError(err);
       } finally {
+        for (const p of downloadedGalleryPaths) {
+          const url = await shareFile(p);
+          if (url) galleryShareUrls.push(url);
+        }
         cleanup();
         deleteMessageSafe(ctx, msg1);
         deleteMessageSafe(ctx, msg2);
@@ -523,6 +592,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
           `pinterest items were downloaded, but Telegram rejected the upload. sending links instead.`,
         );
         await sendChunkedLinks(ctx, galleryLinks);
+        await sendShareUrls(ctx, galleryShareUrls);
         await next();
         return;
       }
@@ -540,6 +610,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       if (userSettings.verboseOutput) {
         await sendChunkedLinks(ctx, galleryLinks);
       }
+      await sendShareUrls(ctx, galleryShareUrls);
     }
 
     await next();
