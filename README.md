@@ -116,7 +116,7 @@ for age-restricted or geo-restricted youtube content, set `YT_DLP_COOKIES_PATH` 
 
 ### file sharing
 
-when enabled, the bot copies each downloaded file to a persistent directory and sends the user a direct http download link in addition to the telegram upload. files are automatically deleted after `FILE_SHARE_TTL_S` (default 600).
+when enabled, the bot copies each downloaded file to a persistent directory and sends the user a direct http download link in addition to the telegram upload. files are automatically deleted after `FILE_SHARE_TTL_S` seconds (default 3600). per-user file sharing behavior can be configured via `/settings` (always / as fallback / never).
 
 set `FILE_SHARE_ENABLED=true` and choose a server mode:
 
@@ -155,6 +155,14 @@ location /files/ {
     proxy_pass http://127.0.0.1:3000/;
 }
 ```
+
+**optional knobs:**
+
+| variable | default | description |
+|----------|---------|-------------|
+| `FILE_SHARE_TTL_S` | `3600` | how long shared files are kept before deletion |
+| `FILE_SHARE_CLEANUP_INTERVAL_S` | `300` | how often expired files are purged (seconds) |
+| `FILE_SHARE_MAX_DIR_SIZE_MB` | `0` | total storage cap for `FILE_SHARE_DIR` in MB; `0` = no limit. new shares are skipped (with a warning) when the cap would be exceeded |
 
 ## usage
 

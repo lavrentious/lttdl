@@ -18,8 +18,23 @@ import type { YoutubePreset } from "src/dl/types";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
 
+export type FileShareMode = "always" | "as-fallback" | "never";
+export const ALL_FILE_SHARE_MODES: FileShareMode[] = ["always", "as-fallback", "never"];
+export const DEFAULT_FILE_SHARE_MODE: FileShareMode = "as-fallback";
+export const FILE_SHARE_MODE_LABELS: Record<FileShareMode, string> = {
+  "always": "always",
+  "as-fallback": "as fallback",
+  "never": "never",
+};
+export const FILE_SHARE_MODE_DESCRIPTIONS: Record<FileShareMode, string> = {
+  "always": "`always` — copy every download to the share server and send a direct link.",
+  "as-fallback": "`as fallback` — send a link only when the Telegram upload fails or the file exceeds the size limit. \\(default\\)",
+  "never": "`never` — disable file sharing for your downloads.",
+};
+
 export type UserSettings = {
   verboseOutput: boolean;
+  fileShareMode: FileShareMode;
   platformPreferences: {
     tiktok: {
       providers: TiktokProvider[];
@@ -40,11 +55,13 @@ type UserSettingsRow = {
   youtube_preset: string;
   music_search_provider: string;
   music_search_with_cookies: number;
+  file_share_mode: string;
 };
 
 const DEFAULT_TIKTOK_PROVIDERS: TiktokProvider[] = ["v2"];
 const DEFAULT_USER_SETTINGS: UserSettings = {
   verboseOutput: false,
+  fileShareMode: DEFAULT_FILE_SHARE_MODE,
   platformPreferences: {
     tiktok: {
       providers: DEFAULT_TIKTOK_PROVIDERS,
@@ -101,6 +118,12 @@ function normalizeMusicSearchProvider(value: string): MusicSearchProviderId {
     : DEFAULT_MUSIC_SEARCH_PROVIDER;
 }
 
+function normalizeFileShareMode(value: string): FileShareMode {
+  return ALL_FILE_SHARE_MODES.includes(value as FileShareMode)
+    ? (value as FileShareMode)
+    : DEFAULT_FILE_SHARE_MODE;
+}
+
 function normalizeBoolean(value: unknown): boolean {
   return value === true || value === 1 || value === "1";
 }
@@ -128,6 +151,7 @@ function parseTiktokProviders(value: string): TiktokProvider[] {
 function rowToUserSettings(row: UserSettingsRow): UserSettings {
   return {
     verboseOutput: Boolean(row.verbose_output),
+    fileShareMode: normalizeFileShareMode(row.file_share_mode),
     platformPreferences: {
       tiktok: {
         providers: parseTiktokProviders(row.tiktok_providers),
@@ -167,6 +191,12 @@ function ensureUserSettingsColumns(database: Database) {
       ALTER TABLE user_settings ADD COLUMN music_search_with_cookies INTEGER NOT NULL DEFAULT 0;
     `);
   } catch {}
+
+  try {
+    database.exec(`
+      ALTER TABLE user_settings ADD COLUMN file_share_mode TEXT NOT NULL DEFAULT 'as-fallback';
+    `);
+  } catch {}
 }
 
 function upsertUserSettings(userId: number, nextSettings: UserSettings): UserSettings {
@@ -180,15 +210,17 @@ function upsertUserSettings(userId: number, nextSettings: UserSettings): UserSet
           youtube_preset,
           music_search_provider,
           music_search_with_cookies,
+          file_share_mode,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(user_id) DO UPDATE SET
           verbose_output = excluded.verbose_output,
           tiktok_providers = excluded.tiktok_providers,
           youtube_preset = excluded.youtube_preset,
           music_search_provider = excluded.music_search_provider,
           music_search_with_cookies = excluded.music_search_with_cookies,
+          file_share_mode = excluded.file_share_mode,
           updated_at = CURRENT_TIMESTAMP
       `,
     )
@@ -199,6 +231,7 @@ function upsertUserSettings(userId: number, nextSettings: UserSettings): UserSet
       nextSettings.platformPreferences.youtube.preset,
       nextSettings.platformPreferences.music.searchProvider,
       Number(nextSettings.platformPreferences.music.searchWithCookies),
+      nextSettings.fileShareMode,
     );
 
   return getUserSettings(userId);
@@ -228,6 +261,7 @@ export function initUserSettingsDb() {
 export function getDefaultUserSettings(): UserSettings {
   return {
     verboseOutput: DEFAULT_USER_SETTINGS.verboseOutput,
+    fileShareMode: DEFAULT_USER_SETTINGS.fileShareMode,
     platformPreferences: {
       tiktok: {
         providers: [...DEFAULT_USER_SETTINGS.platformPreferences.tiktok.providers],
@@ -247,7 +281,7 @@ export function getDefaultUserSettings(): UserSettings {
 export function getUserSettings(userId: number): UserSettings {
   const row = getDbOrThrow()
     .query(
-      "SELECT verbose_output, tiktok_providers, youtube_preset, music_search_provider, music_search_with_cookies FROM user_settings WHERE user_id = ?",
+      "SELECT verbose_output, tiktok_providers, youtube_preset, music_search_provider, music_search_with_cookies, file_share_mode FROM user_settings WHERE user_id = ?",
     )
     .get(userId) as UserSettingsRow | null;
 
@@ -357,4 +391,12 @@ export function parseMusicSearchProviderInput(
   input: string,
 ): MusicSearchProviderId {
   return normalizeMusicSearchProvider(input.trim().toLowerCase());
+}
+
+export function updateUserFileShareMode(
+  userId: number,
+  mode: FileShareMode,
+): UserSettings {
+  const current = getUserSettings(userId);
+  return upsertUserSettings(userId, { ...current, fileShareMode: normalizeFileShareMode(mode) });
 }

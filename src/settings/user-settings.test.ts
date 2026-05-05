@@ -9,6 +9,7 @@ import {
   initUserSettingsDb,
   parseMusicSearchProviderInput,
   parseYoutubePresetInput,
+  updateUserFileShareMode,
   updateUserMusicSearchProvider,
   updateUserMusicSearchWithCookies,
   updateUserTiktokProviders,
@@ -53,6 +54,8 @@ config.init({
   FILE_SHARE_DIR: "./shared",
   FILE_SHARE_TTL_S: 600,
   FILE_SHARE_SERVER_MODE: "proxy" as const,
+  FILE_SHARE_CLEANUP_INTERVAL_S: 300,
+  FILE_SHARE_MAX_DIR_SIZE_MB: 0,
   FILE_SHARE_SERVER_PORT: 3000,
 });
 initUserSettingsDb();
@@ -74,6 +77,12 @@ describe("user settings", () => {
     const settings = getDefaultUserSettings();
 
     expect(settings.platformPreferences.music.searchWithCookies).toBe(false);
+  });
+
+  test("returns file share mode default", () => {
+    const settings = getDefaultUserSettings();
+
+    expect(settings.fileShareMode).toBe("as-fallback");
   });
 
   test("parses invalid youtube preset as default", () => {
@@ -145,6 +154,26 @@ describe("user settings", () => {
     const settings = getUserSettings(userId);
 
     expect(settings.platformPreferences.music.searchWithCookies).toBe(true);
+  });
+
+  test("persists file share mode updates", () => {
+    const userId = 106;
+    updateUserFileShareMode(userId, "always");
+
+    const settings = getUserSettings(userId);
+
+    expect(settings.fileShareMode).toBe("always");
+  });
+
+  test("preserves other settings when updating file share mode", () => {
+    const userId = 107;
+    updateUserYoutubePreset(userId, "best");
+    updateUserFileShareMode(userId, "never");
+
+    const settings = getUserSettings(userId);
+
+    expect(settings.fileShareMode).toBe("never");
+    expect(settings.platformPreferences.youtube.preset).toBe("best");
   });
 });
 

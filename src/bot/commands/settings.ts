@@ -20,13 +20,19 @@ import {
   type MusicSearchProviderId,
 } from "src/dl/music/types";
 import type { YoutubePreset } from "src/dl/types";
+import { config } from "src/utils/env-validation";
 import {
+  ALL_FILE_SHARE_MODES,
+  FILE_SHARE_MODE_DESCRIPTIONS,
+  FILE_SHARE_MODE_LABELS,
   getUserSettings,
+  updateUserFileShareMode,
   updateUserMusicSearchProvider,
   updateUserMusicSearchWithCookies,
   updateUserTiktokProviders,
   updateUserVerboseOutput,
   updateUserYoutubePreset,
+  type FileShareMode,
 } from "src/settings/user-settings";
 
 const SETTINGS_CALLBACK_PREFIX = "settings";
@@ -46,21 +52,30 @@ function selectIcon(enabled: boolean): string {
 
 function formatMainSettingsMessage(userId: number): string {
   const settings = getUserSettings(userId);
+  const fileShareEnabled = config.get("FILE_SHARE_ENABLED");
 
-  return (
-    `*settings*\n\n` +
+  const description =
     `verbose output controls whether the bot sends link details after successful downloads.\n` +
     `tiktok providers choose the internal extraction paths for tiktok links.\n` +
     `youtube preset chooses how youtube links are downloaded with yt-dlp.\n\n` +
     `music search provider chooses whether /music searches the YouTube Music songs section or regular YouTube videos before downloading.\n` +
-    `music search cookies controls whether /music search runs yt-dlp with --cookies. this can help with restricted results, but it is slower.\n\n` +
+    `music search cookies controls whether /music search runs yt-dlp with --cookies. this can help with restricted results, but it is slower.` +
+    (fileShareEnabled
+      ? `\n\nfile sharing controls when the bot sends a direct download link alongside the Telegram upload.`
+      : ``);
+
+  const current =
     `*current*\n` +
     `verbose: ${settings.verboseOutput ? "on" : "off"}\n` +
     `tiktok providers: ${settings.platformPreferences.tiktok.providers.join(", ")}\n` +
     `youtube preset: ${YOUTUBE_PRESET_LABELS[settings.platformPreferences.youtube.preset]}\n` +
     `music search provider: ${MUSIC_SEARCH_PROVIDER_LABELS[settings.platformPreferences.music.searchProvider]}\n` +
-    `music search cookies: ${settings.platformPreferences.music.searchWithCookies ? "on" : "off"}`
-  );
+    `music search cookies: ${settings.platformPreferences.music.searchWithCookies ? "on" : "off"}` +
+    (fileShareEnabled
+      ? `\nfile sharing: ${FILE_SHARE_MODE_LABELS[settings.fileShareMode]}`
+      : ``);
+
+  return `*settings*\n\n${description}\n\n${current}`;
 }
 
 function formatProvidersMessage(userId: number): string {
@@ -102,10 +117,37 @@ function formatMusicProviderMessage(userId: number): string {
   );
 }
 
-function buildMainSettingsKeyboard(userId: number): InlineKeyboard {
+function formatFileShareModeMessage(userId: number): string {
   const settings = getUserSettings(userId);
 
-  return new InlineKeyboard()
+  return (
+    `*file sharing*\n\n` +
+    `controls when the bot copies downloads to the share server and sends a direct link.\n\n` +
+    `*current*: ${FILE_SHARE_MODE_LABELS[settings.fileShareMode]}\n\n` +
+    ALL_FILE_SHARE_MODES.map((mode) => FILE_SHARE_MODE_DESCRIPTIONS[mode]).join("\n")
+  );
+}
+
+function buildFileShareModeKeyboard(userId: number): InlineKeyboard {
+  const settings = getUserSettings(userId);
+  const currentMode = settings.fileShareMode;
+  const keyboard = new InlineKeyboard();
+
+  for (const mode of ALL_FILE_SHARE_MODES) {
+    keyboard
+      .text(
+        `${selectIcon(currentMode === mode)} ${FILE_SHARE_MODE_LABELS[mode]}`,
+        `${SETTINGS_CALLBACK_PREFIX}:set_file_share_mode:${userId}:${mode}`,
+      )
+      .row();
+  }
+
+  return keyboard.text("back", `${SETTINGS_CALLBACK_PREFIX}:main:${userId}`);
+}
+
+function buildMainSettingsKeyboard(userId: number): InlineKeyboard {
+  const settings = getUserSettings(userId);
+  const keyboard = new InlineKeyboard()
     .text(
       `verbose ${icon(settings.verboseOutput)}`,
       `${SETTINGS_CALLBACK_PREFIX}:toggle_verbose:${userId}`,
@@ -130,6 +172,17 @@ function buildMainSettingsKeyboard(userId: number): InlineKeyboard {
       `music search cookies ${icon(settings.platformPreferences.music.searchWithCookies)}`,
       `${SETTINGS_CALLBACK_PREFIX}:toggle_music_search_cookies:${userId}`,
     );
+
+  if (config.get("FILE_SHARE_ENABLED")) {
+    keyboard
+      .row()
+      .text(
+        "file sharing >>",
+        `${SETTINGS_CALLBACK_PREFIX}:file_share_mode:${userId}`,
+      );
+  }
+
+  return keyboard;
 }
 
 function buildProvidersKeyboard(userId: number): InlineKeyboard {
@@ -185,7 +238,7 @@ function buildMusicProviderKeyboard(userId: number): InlineKeyboard {
 
 async function editSettingsMessage(
   ctx: CallbackQueryContext<Context>,
-  view: "main" | "providers" | "youtube_preset" | "music_provider",
+  view: "main" | "providers" | "youtube_preset" | "music_provider" | "file_share_mode",
   userId: number,
 ) {
   const text =
@@ -195,7 +248,9 @@ async function editSettingsMessage(
         ? formatProvidersMessage(userId)
         : view === "youtube_preset"
           ? formatYoutubePresetMessage(userId)
-          : formatMusicProviderMessage(userId);
+          : view === "music_provider"
+            ? formatMusicProviderMessage(userId)
+            : formatFileShareModeMessage(userId);
   const replyMarkup =
     view === "main"
       ? buildMainSettingsKeyboard(userId)
@@ -203,7 +258,9 @@ async function editSettingsMessage(
         ? buildProvidersKeyboard(userId)
         : view === "youtube_preset"
           ? buildYoutubePresetKeyboard(userId)
-          : buildMusicProviderKeyboard(userId);
+          : view === "music_provider"
+            ? buildMusicProviderKeyboard(userId)
+            : buildFileShareModeKeyboard(userId);
 
   await ctx.editMessageText(text, {
     parse_mode: "Markdown",
@@ -218,6 +275,7 @@ function parseCallbackData(data: string):
         | "providers"
         | "youtube_preset"
         | "music_provider"
+        | "file_share_mode"
         | "toggle_verbose"
         | "toggle_music_search_cookies";
       userId: number;
@@ -237,6 +295,11 @@ function parseCallbackData(data: string):
       userId: number;
       provider: MusicSearchProviderId;
     }
+  | {
+      action: "set_file_share_mode";
+      userId: number;
+      mode: FileShareMode;
+    }
   | null {
   const parts = data.split(":");
   if (parts[0] !== SETTINGS_CALLBACK_PREFIX) {
@@ -253,6 +316,7 @@ function parseCallbackData(data: string):
     parts[1] === "providers" ||
     parts[1] === "youtube_preset" ||
     parts[1] === "music_provider" ||
+    parts[1] === "file_share_mode" ||
     parts[1] === "toggle_verbose" ||
     parts[1] === "toggle_music_search_cookies"
   ) {
@@ -295,6 +359,18 @@ function parseCallbackData(data: string):
     };
   }
 
+  if (
+    parts[1] === "set_file_share_mode" &&
+    parts[3] &&
+    ALL_FILE_SHARE_MODES.includes(parts[3] as FileShareMode)
+  ) {
+    return {
+      action: "set_file_share_mode",
+      userId,
+      mode: parts[3] as FileShareMode,
+    };
+  }
+
   return null;
 }
 
@@ -333,7 +409,8 @@ export async function settingsCallbackQuery(
     parsed.action === "main" ||
     parsed.action === "providers" ||
     parsed.action === "youtube_preset" ||
-    parsed.action === "music_provider"
+    parsed.action === "music_provider" ||
+    parsed.action === "file_share_mode"
   ) {
     await editSettingsMessage(ctx, parsed.action, parsed.userId);
     await ctx.answerCallbackQuery();
@@ -389,6 +466,13 @@ export async function settingsCallbackQuery(
   if (parsed.action === "set_music_provider") {
     updateUserMusicSearchProvider(parsed.userId, parsed.provider);
     await editSettingsMessage(ctx, "music_provider", parsed.userId);
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  if (parsed.action === "set_file_share_mode") {
+    updateUserFileShareMode(parsed.userId, parsed.mode);
+    await editSettingsMessage(ctx, "file_share_mode", parsed.userId);
     await ctx.answerCallbackQuery();
     return;
   }

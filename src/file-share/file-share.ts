@@ -1,7 +1,7 @@
 import { randomUUIDv7 } from "bun";
 import { Database } from "bun:sqlite";
 import { zipSync } from "fflate";
-import { mkdirSync, readFileSync, rmSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, statSync } from "fs";
 import { copyFile } from "fs/promises";
 import path from "path";
 import { config } from "src/utils/env-validation";
@@ -14,6 +14,30 @@ let db: Database | null = null;
 function getDb(): Database {
   if (!db) throw new Error("file-share database is not initialized");
   return db;
+}
+
+function getTotalTrackedBytes(): number {
+  const row = getDb()
+    .query("SELECT COALESCE(SUM(file_size), 0) as total FROM shared_files")
+    .get() as { total: number };
+  return row.total;
+}
+
+function wouldExceedCap(additionalBytes: number): boolean {
+  const maxMb = config.get("FILE_SHARE_MAX_DIR_SIZE_MB");
+  if (maxMb === 0) return false;
+  return getTotalTrackedBytes() + additionalBytes > maxMb * 1024 * 1024;
+}
+
+function ensureSharedFilesColumns(database: Database): void {
+  try {
+    database.exec(
+      `ALTER TABLE shared_files ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0;`,
+    );
+  } catch {}
+  try {
+    database.exec(`ALTER TABLE shared_files ADD COLUMN user_id INTEGER;`);
+  } catch {}
 }
 
 function deleteExpiredFiles(): void {
@@ -62,11 +86,14 @@ export function initFileShare(): void {
     CREATE TABLE IF NOT EXISTS shared_files (
       id         TEXT NOT NULL PRIMARY KEY,
       file_path  TEXT NOT NULL,
+      file_size  INTEGER NOT NULL DEFAULT 0,
+      user_id    INTEGER,
       expire_at  TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_shared_files_expire_at ON shared_files (expire_at);
   `);
+  ensureSharedFilesColumns(db);
 
   deleteExpiredFiles();
   logger.info("file-share: straggler cleanup complete");
@@ -79,7 +106,7 @@ export function initFileShare(): void {
         logError(err);
       }
     },
-    5 * 60 * 1000,
+    config.get("FILE_SHARE_CLEANUP_INTERVAL_S") * 1000,
   ).unref();
 
   if (config.get("FILE_SHARE_SERVER_MODE") === "builtin") {
@@ -111,14 +138,11 @@ export function initFileShare(): void {
 
 export async function createAndShareZip(
   filePaths: string[],
+  userId: number | null,
 ): Promise<string | null> {
   if (!config.get("FILE_SHARE_ENABLED") || !db || filePaths.length < 2)
     return null;
   try {
-    const id = randomUUIDv7();
-    const destFilename = `${id}.zip`;
-    const destPath = path.join(config.get("FILE_SHARE_DIR"), destFilename);
-
     const entries: Record<string, [Uint8Array, { level: 0 }]> = {};
     for (const filePath of filePaths) {
       entries[path.basename(filePath)] = [
@@ -126,7 +150,19 @@ export async function createAndShareZip(
         { level: 0 },
       ];
     }
-    await Bun.write(destPath, zipSync(entries));
+    const zipData = zipSync(entries);
+
+    if (wouldExceedCap(zipData.byteLength)) {
+      logger.warn(
+        `file-share: skipping zip (${(zipData.byteLength / 1024 / 1024).toFixed(1)} MB) — would exceed FILE_SHARE_MAX_DIR_SIZE_MB`,
+      );
+      return null;
+    }
+
+    const id = randomUUIDv7();
+    const destFilename = `${id}.zip`;
+    const destPath = path.join(config.get("FILE_SHARE_DIR"), destFilename);
+    await Bun.write(destPath, zipData);
 
     const expireAt = new Date(
       Date.now() + config.get("FILE_SHARE_TTL_S") * 1000,
@@ -135,8 +171,8 @@ export async function createAndShareZip(
       .replace("T", " ")
       .slice(0, 19);
     db.query(
-      "INSERT INTO shared_files (id, file_path, expire_at) VALUES (?, ?, ?)",
-    ).run(id, destPath, expireAt);
+      "INSERT INTO shared_files (id, file_path, file_size, user_id, expire_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(id, destPath, zipData.byteLength, userId, expireAt);
 
     const url = `${config.get("FILE_SHARE_BASE_URL")!.replace(/\/$/, "")}/${destFilename}`;
     logger.debug(`file-share: registered zip ${url} (expires ${expireAt})`);
@@ -147,9 +183,21 @@ export async function createAndShareZip(
   }
 }
 
-export async function shareFile(sourcePath: string): Promise<string | null> {
+export async function shareFile(
+  sourcePath: string,
+  userId: number | null,
+): Promise<string | null> {
   if (!config.get("FILE_SHARE_ENABLED") || !db) return null;
   try {
+    const fileSize = statSync(sourcePath).size;
+
+    if (wouldExceedCap(fileSize)) {
+      logger.warn(
+        `file-share: skipping ${path.basename(sourcePath)} (${(fileSize / 1024 / 1024).toFixed(1)} MB) — would exceed FILE_SHARE_MAX_DIR_SIZE_MB`,
+      );
+      return null;
+    }
+
     const id = randomUUIDv7();
     const ext = path.extname(sourcePath);
     const destFilename = `${id}${ext}`;
@@ -163,8 +211,8 @@ export async function shareFile(sourcePath: string): Promise<string | null> {
       .replace("T", " ")
       .slice(0, 19);
     db.query(
-      "INSERT INTO shared_files (id, file_path, expire_at) VALUES (?, ?, ?)",
-    ).run(id, destPath, expireAt);
+      "INSERT INTO shared_files (id, file_path, file_size, user_id, expire_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(id, destPath, fileSize, userId, expireAt);
 
     const url = `${config.get("FILE_SHARE_BASE_URL")!.replace(/\/$/, "")}/${destFilename}`;
     logger.debug(`file-share: registered ${url} (expires ${expireAt})`);

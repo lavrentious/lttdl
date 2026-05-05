@@ -280,7 +280,7 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
   links: string[];
   verboseOutput: boolean;
   cleanup: () => void;
-  onBeforeCleanup?: (paths: string[]) => Promise<void>;
+  onBeforeCleanup?: (paths: string[], uploadFailed: boolean) => Promise<void>;
   sendMedia: (variant: Extract<T, { downloaded: true }>) => Promise<unknown>;
 }): Promise<void> {
   const maxFileSizeMb = config.get("BOT_MAX_FILE_SIZE_MB");
@@ -297,7 +297,7 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
     deleteMessageSafe(ctx, loadingMessage);
     await ctx.reply(fallbackText);
     await sendChunkedLinks(ctx, links);
-    await onBeforeCleanup?.(allDownloadedPaths).catch(() => {});
+    await onBeforeCleanup?.(allDownloadedPaths, true).catch(() => {});
     cleanup();
     return;
   }
@@ -311,7 +311,7 @@ async function sendSingleMediaResult<T extends VideoVariant | MusicVariant>({
     uploadFailed = true;
     logError(err);
   } finally {
-    await onBeforeCleanup?.(allDownloadedPaths).catch(() => {});
+    await onBeforeCleanup?.(allDownloadedPaths, uploadFailed).catch(() => {});
     cleanup();
     deleteMessageSafe(ctx, loadingMessage);
     deleteMessageSafe(ctx, progressMessage);
@@ -431,9 +431,11 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         links,
         verboseOutput: userSettings.verboseOutput,
         cleanup,
-        onBeforeCleanup: async (paths) => {
+        onBeforeCleanup: userSettings.fileShareMode === "never" ? undefined : async (paths, uploadFailed) => {
+          if (userSettings.fileShareMode === "as-fallback" && !uploadFailed) return;
+          const userId = ctx.from?.id ?? null;
           for (const p of paths) {
-            const url = await shareFile(p);
+            const url = await shareFile(p, userId);
             if (url) videoShareUrls.push(url);
           }
         },
@@ -489,13 +491,15 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         uploadFailed = true;
         logError(err);
       } finally {
-        for (const { label, path } of imageShareFiles) {
-          const url = await shareFile(path);
-          if (url) imageShareResults.push({ label, url });
+        const fsMode = userSettings.fileShareMode;
+        if (fsMode !== "never" && (fsMode === "always" || uploadFailed)) {
+          const userId = ctx.from?.id ?? null;
+          for (const { label, path } of imageShareFiles) {
+            const url = await shareFile(path, userId);
+            if (url) imageShareResults.push({ label, url });
+          }
+          imageZipUrl = await createAndShareZip(imageShareFiles.map((f) => f.path), userId);
         }
-        imageZipUrl = await createAndShareZip(
-          imageShareFiles.map((f) => f.path),
-        );
         cleanup();
         deleteMessageSafe(ctx, msg1);
         deleteMessageSafe(ctx, msg2);
@@ -535,9 +539,11 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         links,
         verboseOutput: userSettings.verboseOutput,
         cleanup,
-        onBeforeCleanup: async (paths) => {
+        onBeforeCleanup: userSettings.fileShareMode === "never" ? undefined : async (paths, uploadFailed) => {
+          if (userSettings.fileShareMode === "as-fallback" && !uploadFailed) return;
+          const userId = ctx.from?.id ?? null;
           for (const p of paths) {
-            const url = await shareFile(p);
+            const url = await shareFile(p, userId);
             if (url) musicShareUrls.push(url);
           }
         },
@@ -586,13 +592,15 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
 
       if (!uploadableMedia.length) {
         const galleryShareResults: Array<{ label: number; url: string }> = [];
-        for (const { label, path } of galleryShareFiles) {
-          const url = await shareFile(path);
-          if (url) galleryShareResults.push({ label, url });
+        let galleryZipUrl: string | null = null;
+        if (userSettings.fileShareMode !== "never") {
+          const userId = ctx.from?.id ?? null;
+          for (const { label, path } of galleryShareFiles) {
+            const url = await shareFile(path, userId);
+            if (url) galleryShareResults.push({ label, url });
+          }
+          galleryZipUrl = await createAndShareZip(galleryShareFiles.map((f) => f.path), userId);
         }
-        const galleryZipUrl = await createAndShareZip(
-          galleryShareFiles.map((f) => f.path),
-        );
         cleanup();
         deleteMessageSafe(ctx, msg1);
         deleteMessageSafe(ctx, msg2);
@@ -617,13 +625,15 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         uploadFailed = true;
         logError(err);
       } finally {
-        for (const { label, path } of galleryShareFiles) {
-          const url = await shareFile(path);
-          if (url) galleryShareResults.push({ label, url });
+        const fsMode = userSettings.fileShareMode;
+        if (fsMode !== "never" && (fsMode === "always" || uploadFailed)) {
+          const userId = ctx.from?.id ?? null;
+          for (const { label, path } of galleryShareFiles) {
+            const url = await shareFile(path, userId);
+            if (url) galleryShareResults.push({ label, url });
+          }
+          galleryZipUrl = await createAndShareZip(galleryShareFiles.map((f) => f.path), userId);
         }
-        galleryZipUrl = await createAndShareZip(
-          galleryShareFiles.map((f) => f.path),
-        );
         cleanup();
         deleteMessageSafe(ctx, msg1);
         deleteMessageSafe(ctx, msg2);

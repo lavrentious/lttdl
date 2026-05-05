@@ -65,6 +65,8 @@ export const envSchema = z.object({
   FILE_SHARE_BASE_URL: z.string().optional(),
   FILE_SHARE_DIR: z.string().default("./shared"),
   FILE_SHARE_TTL_S: z.coerce.number().int().positive().default(60 * 60),
+  FILE_SHARE_CLEANUP_INTERVAL_S: z.coerce.number().int().positive().default(5 * 60),
+  FILE_SHARE_MAX_DIR_SIZE_MB: z.coerce.number().int().min(0).default(0), // 0 = no limit
   FILE_SHARE_SERVER_MODE: z.enum(["proxy", "builtin"]).default("proxy"),
   FILE_SHARE_SERVER_PORT: z.coerce.number().int().positive().default(3000),
 });
