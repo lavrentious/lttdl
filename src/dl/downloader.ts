@@ -225,7 +225,7 @@ async function buildVideoResult(
         },
         { signal },
       );
-      variants.push(...sortByResolution(downloadedVariants));
+      variants.splice(0, variants.length, ...sortByResolution(downloadedVariants));
     } else {
       for (const [index, variant] of entry.variants.entries()) {
         throwIfAborted(signal);

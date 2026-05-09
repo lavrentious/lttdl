@@ -89,26 +89,26 @@ export class AssetProcessor {
         size: Bun.file(mp4Path).size,
         cleanup: () => {
           if (sourcePath !== mp4Path) {
-            Bun.file(sourcePath).delete().catch();
+            Bun.file(sourcePath).delete().catch(() => {});
           }
-          Bun.file(mp4Path).delete().catch();
+          Bun.file(mp4Path).delete().catch(() => {});
         },
       } satisfies VideoVariant;
     } catch (error) {
       if (isCancelledError(error)) {
         if (downloadedPath) {
-          Bun.file(downloadedPath).delete().catch();
+          Bun.file(downloadedPath).delete().catch(() => {});
         }
         if (finalPath) {
-          Bun.file(finalPath).delete().catch();
+          Bun.file(finalPath).delete().catch(() => {});
         }
         throw error;
       }
       if (downloadedPath) {
-        Bun.file(downloadedPath).delete().catch();
+        Bun.file(downloadedPath).delete().catch(() => {});
       }
       if (finalPath) {
-        Bun.file(finalPath).delete().catch();
+        Bun.file(finalPath).delete().catch(() => {});
       }
       logger.warn(`failed to download video from ${variant.url}`);
       return {
@@ -143,25 +143,25 @@ export class AssetProcessor {
         path: finalPath,
         size: Bun.file(finalPath).size,
         cleanup: () => {
-          Bun.file(downloadedPath).delete().catch();
-          Bun.file(finalPath).delete().catch();
+          Bun.file(downloadedPath).delete().catch(() => {});
+          Bun.file(finalPath).delete().catch(() => {});
         },
       } satisfies PhotoVariant;
     } catch (error) {
       if (isCancelledError(error)) {
         if (path) {
-          Bun.file(path).delete().catch();
+          Bun.file(path).delete().catch(() => {});
         }
         if (recodedPath) {
-          Bun.file(recodedPath).delete().catch();
+          Bun.file(recodedPath).delete().catch(() => {});
         }
         throw error;
       }
       if (path) {
-        Bun.file(path).delete().catch();
+        Bun.file(path).delete().catch(() => {});
       }
       if (recodedPath) {
-        Bun.file(recodedPath).delete().catch();
+        Bun.file(recodedPath).delete().catch(() => {});
       }
       logger.warn(`failed to download image from ${variant.url}`);
       return {
@@ -212,18 +212,18 @@ export class AssetProcessor {
           durationSeconds,
         },
         cleanup: () => {
-          Bun.file(downloadedPath).delete().catch();
+          Bun.file(downloadedPath).delete().catch(() => {});
         },
       } satisfies MusicVariant;
     } catch (error) {
       if (isCancelledError(error)) {
         if (path) {
-          Bun.file(path).delete().catch();
+          Bun.file(path).delete().catch(() => {});
         }
         throw error;
       }
       if (path) {
-        Bun.file(path).delete().catch();
+        Bun.file(path).delete().catch(() => {});
       }
       logger.warn(`failed to download audio from ${variant.url}`);
       return {
