@@ -47,8 +47,30 @@ import {
   sendChunkedLinks,
 } from "./download-presentation";
 import { musicSearchFromMessage, shouldFallbackToMusicSearch } from "./music";
+import type { YoutubePreset } from "src/dl/types";
 
 const MAX_MEDIA_GROUP_SIZE = 10;
+
+const DOWNLOAD_PREFIX_PRESETS: Record<string, YoutubePreset> = {
+  v: "auto-video-audio",
+  video: "auto-video-audio",
+  a: "auto-audio-only",
+  audio: "auto-audio-only",
+  bv: "best",
+  ba: "best-audio",
+};
+
+function parseDownloadPrefix(
+  text: string,
+): { preset: YoutubePreset; rest: string } | null {
+  const match = text.match(/^!(v|video|a|audio|bv|ba)\s+(.*)/is);
+  if (!match) return null;
+  const key = match[1]!.toLowerCase();
+  return {
+    preset: DOWNLOAD_PREFIX_PRESETS[key]!,
+    rest: match[2]!.trim(),
+  };
+}
 
 async function sendShareUrls(
   ctx: Filter<Context, "message">,
@@ -341,11 +363,26 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
     return;
   }
 
-  const query = isHttpURL(text) ? text : extractHttpURL(text);
+  let activeText = text;
+  let youtubePresetOverride: YoutubePreset | undefined;
+  const downloadPrefixResult = parseDownloadPrefix(text);
+  if (downloadPrefixResult) {
+    const url = isHttpURL(downloadPrefixResult.rest)
+      ? downloadPrefixResult.rest
+      : extractHttpURL(downloadPrefixResult.rest);
+    if (!url) {
+      await ctx.reply("usage: !v / !video / !a / !audio / !bv / !ba <url>");
+      return;
+    }
+    activeText = url;
+    youtubePresetOverride = downloadPrefixResult.preset;
+  }
+
+  const query = isHttpURL(activeText) ? activeText : extractHttpURL(activeText);
 
   if (!query) {
-    if (shouldFallbackToMusicSearch(text)) {
-      await musicSearchFromMessage(ctx, text.trim());
+    if (shouldFallbackToMusicSearch(activeText)) {
+      await musicSearchFromMessage(ctx, activeText.trim());
       return;
     }
 
@@ -398,7 +435,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       query,
       {
         tiktokProviders: userSettings.platformPreferences.tiktok.providers,
-        youtubePreset: userSettings.platformPreferences.youtube.preset,
+        youtubePreset: youtubePresetOverride ?? userSettings.platformPreferences.youtube.preset,
       },
       {
         strategy: downloadStrategy,

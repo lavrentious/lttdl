@@ -109,7 +109,7 @@ function formatMusicProviderMessage(userId: number): string {
 
   return (
     `*music search provider*\n\n` +
-    `this provider controls whether \`/music\` searches the YouTube Music songs section or regular YouTube videos before downloading the selected result.\n\n` +
+    `this provider controls whether \`/music\` searches the YouTube Music songs section or regular YouTube videos before downloading the selected result. you can also override it per\\-query with \`!yt <query>\` or \`!ytm <query>\`\\.\n\n` +
     `*current*: ${MUSIC_SEARCH_PROVIDER_LABELS[settings.platformPreferences.music.searchProvider]}\n\n` +
     ALL_MUSIC_SEARCH_PROVIDERS.map(
       (provider) => MUSIC_SEARCH_PROVIDER_DESCRIPTIONS[provider],

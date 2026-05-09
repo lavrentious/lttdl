@@ -25,6 +25,7 @@ import {
   searchMusic,
   type MusicSearchResult,
 } from "src/dl/music";
+import type { MusicSearchProviderId } from "src/dl/music/types";
 import type { DownloadProgress, MusicVariant } from "src/dl/types";
 import {
   DownloadError,
@@ -368,6 +369,18 @@ function parseMusicCommandQuery(ctx: CommandContext<Context>): string {
   return text.replace(/^\/music(?:@\S+)?\s*/i, "").trim();
 }
 
+export function parseMusicPrefix(text: string): {
+  provider: MusicSearchProviderId | null;
+  query: string;
+} {
+  const match = text.match(/^!(ytm|yt)\s*(.*)/is);
+  if (!match) return { provider: null, query: text };
+  return {
+    provider: match[1]!.toLowerCase() === "ytm" ? "youtube-music" : "youtube",
+    query: match[2]!.trim(),
+  };
+}
+
 export function shouldFallbackToMusicSearch(text: string): boolean {
   const query = text.trim();
   return query.length > 0 && !query.startsWith("/");
@@ -443,6 +456,7 @@ async function editSearchPage(
 async function runMusicSearch(
   ctx: CommandContext<Context> | Filter<Context, "message">,
   query: string,
+  providerOverride?: MusicSearchProviderId,
 ) {
   if (!ctx.from) {
     await ctx.reply("unable to resolve user");
@@ -481,7 +495,7 @@ async function runMusicSearch(
     messageId: loadingMessage.message_id,
   });
   const userSettings = getUserSettings(ctx.from.id);
-  const provider = userSettings.platformPreferences.music.searchProvider;
+  const provider = providerOverride ?? userSettings.platformPreferences.music.searchProvider;
 
   try {
     const results = await searchMusic(provider, query, musicSearchLimit, {
@@ -519,20 +533,31 @@ async function runMusicSearch(
 }
 
 export async function musicCommand(ctx: CommandContext<Context>) {
-  const query = parseMusicCommandQuery(ctx);
-  if (!query) {
-    await ctx.reply("usage: /music <song or artist>");
+  const rawQuery = parseMusicCommandQuery(ctx);
+  if (!rawQuery) {
+    await ctx.reply("usage: /music [!yt|!ytm] <song or artist>");
     return;
   }
 
-  await runMusicSearch(ctx, query);
+  const { provider, query } = parseMusicPrefix(rawQuery);
+  if (!query) {
+    await ctx.reply("usage: /music [!yt|!ytm] <song or artist>");
+    return;
+  }
+
+  await runMusicSearch(ctx, query, provider ?? undefined);
 }
 
 export async function musicSearchFromMessage(
   ctx: Filter<Context, "message">,
-  query: string,
+  text: string,
 ) {
-  await runMusicSearch(ctx, query);
+  const { provider, query } = parseMusicPrefix(text);
+  if (!query) {
+    await ctx.reply("usage: !yt <query> or !ytm <query>");
+    return;
+  }
+  await runMusicSearch(ctx, query, provider ?? undefined);
 }
 
 export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {

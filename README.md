@@ -108,6 +108,23 @@ per-user configuration, accessible via the `/settings` command:
 
 send a plain text query or `/music <query>` to search for a track and download it as mp3. results are paginated with inline buttons.
 
+to override the configured provider for a single search, prefix the query:
+- `!yt <query>` — search youtube videos
+- `!ytm <query>` — search youtube music
+
+works with both plain text messages and `/music !yt <query>`.
+
+### download prefix shortcuts
+
+prefix a url with one of the following to override your youtube preset for a single download:
+
+| prefix | equivalent preset | description |
+|--------|-------------------|-------------|
+| `!v <url>` / `!video <url>` | `auto-video-audio` | auto video+audio |
+| `!a <url>` / `!audio <url>` | `auto-audio-only` | auto audio only |
+| `!bv <url>` | `best` | best video+audio |
+| `!ba <url>` | `best-audio` | best audio (mp3) |
+
 ### cookies
 
 for age-restricted or geo-restricted youtube content, set `YT_DLP_COOKIES_PATH` to a netscape-format cookies file (export from your browser with a "cookies.txt" extension).
@@ -167,7 +184,9 @@ location /files/ {
 ## usage
 
 - send a tiktok / youtube / instagram / pinterest link → bot downloads and sends the media
+- `!v / !a / !bv / !ba <url>` → override youtube preset for a single download
 - send a text query → music search (or use `/music <query>`)
+- `!yt <query>` / `!ytm <query>` → music search with provider override
 - `/settings` — configure per-user preferences
 - `/start` — show help
 
