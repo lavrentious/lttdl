@@ -13,12 +13,12 @@ export const ALL_YOUTUBE_PRESETS: YoutubePreset[] = [
 ];
 
 export const YOUTUBE_PRESET_LABELS: Record<YoutubePreset, string> = {
-  "auto-video-audio": "auto video+audio",
-  "auto-audio-only": "auto audio only",
-  best: "best",
+  "auto-video-audio": "auto video+audio (!v)",
+  "auto-audio-only": "auto audio only (!a)",
+  best: "best (!bv)",
   "fast-1080": "fast 1080p",
   "fast-720": "fast 720p",
-  "best-audio": "best audio",
+  "best-audio": "best audio (!ba)",
   "mid-audio": "mid audio",
 };
 
