@@ -6,6 +6,7 @@ import { config } from "src/utils/env-validation";
 import { logError, logger } from "src/utils/logger";
 import { cancelCallbackQuery } from "./commands/cancel";
 import { downloadCommand } from "./commands/download";
+import { memeCommand } from "./commands/meme";
 import { musicCallbackQuery, musicCommand } from "./commands/music";
 import { settingsCallbackQuery, settingsCommand } from "./commands/settings";
 
@@ -73,6 +74,7 @@ function createBot() {
   bot.callbackQuery(/^cancel:/, cancelCallbackQuery);
   bot.callbackQuery(/^settings:/, settingsCallbackQuery);
   bot.callbackQuery(/^music:/, musicCallbackQuery);
+  bot.on("message:photo", memeCommand);
   bot.on("message", downloadCommand);
 
   bot.catch((err) => {
