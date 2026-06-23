@@ -32,8 +32,7 @@ install system deps on debian/ubuntu:
 ```sh
 apt install ffmpeg
 pip install yt-dlp instaloader
-pip install "git+https://github.com/lavrentious/pinterest-dl.git@feature/json-mode-pr" # custom fork
-# pip install pinterest-dl  # outdated for now, waiting for json mode
+pip install pinterest-dl
 ```
 
 ## installation
