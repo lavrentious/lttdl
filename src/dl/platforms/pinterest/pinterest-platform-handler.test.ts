@@ -38,6 +38,7 @@ describe("PinterestPlatformHandler", () => {
     const progressStages: string[] = [];
     const handler = new PinterestPlatformHandler({
       which: () => "/usr/bin/pinterest-dl",
+      resolveShortLink: async (u: string) => u,
       runCommand: async () => ({
         exitCode: 0,
         stdout: JSON.stringify({
@@ -100,6 +101,7 @@ describe("PinterestPlatformHandler", () => {
     );
     const handler = new PinterestPlatformHandler({
       which: () => "/usr/bin/pinterest-dl",
+      resolveShortLink: async (u: string) => u,
       runCommand: async () => ({
         exitCode: 0,
         stdout: JSON.stringify({
@@ -162,6 +164,7 @@ describe("PinterestPlatformHandler", () => {
   test("fails clearly when pinterest-dl is missing", async () => {
     const handler = new PinterestPlatformHandler({
       which: () => null,
+      resolveShortLink: async (u: string) => u,
       runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
       downloadImageItem: async () => ({
         downloaded: false,
@@ -183,6 +186,7 @@ describe("PinterestPlatformHandler", () => {
     let downloadCount = 0;
     const handler = new PinterestPlatformHandler({
       which: () => "/usr/bin/pinterest-dl",
+      resolveShortLink: async (u: string) => u,
       runCommand: async () => ({
         exitCode: 0,
         stdout: JSON.stringify({
@@ -241,5 +245,84 @@ describe("PinterestPlatformHandler", () => {
       ),
     ).rejects.toThrow("operation cancelled");
     expect(cleaned).toEqual(["1"]);
+  });
+
+  test("resolves pin.it short links before invoking pinterest-dl", async () => {
+    const canonical = "https://de.pinterest.com/pin/724798133820958357/";
+    let capturedCmd: string[] = [];
+    const handler = new PinterestPlatformHandler({
+      which: () => "/usr/bin/pinterest-dl",
+      resolveShortLink: async () => canonical,
+      runCommand: async (cmd) => {
+        capturedCmd = cmd;
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            command: "scrape",
+            results: [{ input: canonical, items: [buildImageItem(1)] }],
+          }),
+          stderr: "",
+        };
+      },
+      downloadImageItem: async (item) => ({
+        downloaded: true,
+        downloadUrl: item.origin,
+        path: `/tmp/${item.id}.jpg`,
+        size: 1,
+        payload: { resolution: { width: 800, height: 1200 } },
+      }),
+      downloadVideoItem: async () => ({
+        downloaded: false,
+        downloadUrl: "https://example.com",
+      }),
+    });
+
+    await handler.download!("https://pin.it/sRJJeGlaz", {}, { tempDir: "/tmp" });
+
+    expect(capturedCmd).toContain(canonical);
+    expect(capturedCmd).not.toContain("https://pin.it/sRJJeGlaz");
+  });
+
+  test("falls back to the original url when short-link resolution fails", async () => {
+    let capturedCmd: string[] = [];
+    const handler = new PinterestPlatformHandler({
+      which: () => "/usr/bin/pinterest-dl",
+      resolveShortLink: async () => {
+        throw new Error("network unreachable");
+      },
+      runCommand: async (cmd) => {
+        capturedCmd = cmd;
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            command: "scrape",
+            results: [
+              { input: "https://pin.it/example", items: [buildImageItem(1)] },
+            ],
+          }),
+          stderr: "",
+        };
+      },
+      downloadImageItem: async (item) => ({
+        downloaded: true,
+        downloadUrl: item.origin,
+        path: `/tmp/${item.id}.jpg`,
+        size: 1,
+        payload: { resolution: { width: 800, height: 1200 } },
+      }),
+      downloadVideoItem: async () => ({
+        downloaded: false,
+        downloadUrl: "https://example.com",
+      }),
+    });
+
+    const result = await handler.download!(
+      "https://pin.it/example",
+      {},
+      { tempDir: "/tmp" },
+    );
+
+    expect(result.res.contentType).toBe("image");
+    expect(capturedCmd).toContain("https://pin.it/example");
   });
 });

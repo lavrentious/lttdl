@@ -8,7 +8,7 @@ import {
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
 import { isLikelyOversizeVideo } from "src/dl/size-guard";
-import { throwIfAborted } from "src/utils/async";
+import { throwIfAborted, withTimeout } from "src/utils/async";
 import { getVideoMetadata } from "src/utils/video";
 import { AssetDownloader } from "../../asset-downloader";
 import { AssetProcessor } from "../../asset-processor";
@@ -25,6 +25,10 @@ import type {
 
 const PINTEREST_DL_BINARY = "pinterest-dl";
 const MAX_BOARD_ITEMS = 100;
+const SHORT_LINK_HOSTS = ["pin.it"];
+const SHORT_LINK_TIMEOUT_MS = 10_000;
+const SHORT_LINK_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
 type PinterestResolution = {
   x: number;
@@ -70,6 +74,7 @@ type CommandHooks = {
 
 type PinterestHandlerDeps = {
   which: (binary: string) => string | null;
+  resolveShortLink: (url: string, signal?: AbortSignal) => Promise<string>;
   runCommand: (cmd: string[], hooks?: CommandHooks) => Promise<CommandResult>;
   downloadImageItem: (
     item: PinterestItem,
@@ -132,6 +137,50 @@ async function readStream(
   }
 
   return output;
+}
+
+function isPinterestShortLink(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return SHORT_LINK_HOSTS.some(
+      (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * pinterest-dl decides "single pin" vs "board" from the raw url string it is
+ * given, before it resolves short links itself. A pin.it link has no `/pin/`
+ * segment, so it is treated as a board and defaults to scraping 100 items -
+ * the target pin followed by 99 recommendations. Resolve the redirect here so
+ * the cli sees a canonical url and scrapes just the pin.
+ */
+async function resolveShortLink(
+  url: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (!isPinterestShortLink(url)) {
+    return url;
+  }
+
+  const response = await withTimeout(
+    fetch(url, {
+      redirect: "follow",
+      signal,
+      headers: { "user-agent": SHORT_LINK_USER_AGENT },
+    }),
+    SHORT_LINK_TIMEOUT_MS,
+    "pinterest short link resolution",
+    signal,
+  );
+
+  try {
+    await response.body?.cancel();
+  } catch {}
+
+  return response.url || url;
 }
 
 async function runCommand(cmd: string[], hooks: CommandHooks = {}): Promise<CommandResult> {
@@ -400,11 +449,37 @@ export class PinterestPlatformHandler implements PlatformHandler {
   constructor(
     private readonly deps: PinterestHandlerDeps = {
       which: (binary) => Bun.which(binary),
+      resolveShortLink,
       runCommand,
       downloadImageItem,
       downloadVideoItem,
     },
   ) {}
+
+  private async resolveTarget(
+    url: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    try {
+      const resolved = await this.deps.resolveShortLink(url, signal);
+      if (resolved !== url) {
+        logger.debug(`resolved pinterest short link ${url} -> ${resolved}`);
+      }
+      return resolved;
+    } catch (error) {
+      throwIfAborted(signal);
+      if (error instanceof OperationCancelledError) {
+        throw error;
+      }
+
+      logger.warn(
+        `failed to resolve pinterest short link ${url}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return url;
+    }
+  }
 
   canHandle(url: string): boolean {
     try {
@@ -432,10 +507,11 @@ export class PinterestPlatformHandler implements PlatformHandler {
       message: "resolving pinterest items...",
     });
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
+    const target = await this.resolveTarget(url, options?.signal);
     const { exitCode, stdout, stderr } = await this.deps.runCommand([
       PINTEREST_DL_BINARY,
       "scrape",
-      url,
+      target,
       "--video",
       "--json",
     ], {
