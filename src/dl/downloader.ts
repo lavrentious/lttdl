@@ -7,6 +7,7 @@ import type { PlatformHandler, ResolveContext } from "./platform-handler";
 import { InstagramPlatformHandler } from "./platforms/instagram/instagram-platform-handler";
 import { PinterestPlatformHandler } from "./platforms/pinterest/pinterest-platform-handler";
 import { TiktokPlatformHandler } from "./platforms/tiktok/tiktok-platform-handler";
+import { XPlatformHandler } from "./platforms/x/x-platform-handler";
 import { YoutubePlatformHandler } from "./platforms/youtube/youtube-platform-handler";
 import type {
   DownloadExecutionResult,
@@ -58,6 +59,7 @@ const defaultRouter = new DownloadRouter([
   new YoutubePlatformHandler(),
   new PinterestPlatformHandler(),
   new InstagramPlatformHandler(),
+  new XPlatformHandler(),
 ]);
 
 const assetProcessor = new AssetProcessor(new AssetDownloader());

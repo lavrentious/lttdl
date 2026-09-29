@@ -1,4 +1,4 @@
-export type Platform = "tiktok" | "youtube" | "pinterest" | "instagram";
+export type Platform = "tiktok" | "youtube" | "pinterest" | "instagram" | "x";
 export type YoutubePreset =
   | "auto-video-audio"
   | "auto-audio-only"

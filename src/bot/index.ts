@@ -28,7 +28,7 @@ function startupCheck() {
 
   if (!ytDlpPath) {
     logger.warn(
-      "yt-dlp is not installed; youtube downloads will fail until it is available in PATH.",
+      "yt-dlp is not installed; youtube and x downloads will fail until it is available in PATH.",
     );
   }
 
@@ -61,8 +61,8 @@ function createBot() {
   bot.command("start", (ctx) =>
     ctx.reply(
       "hi.\n" +
-        "this is a bot for downloading tiktoks without watermarks, youtube media, pinterest pins/boards, instagram posts/reels, and searched music. no ads, no spam, no sponsors.\n" +
-        "send a tiktok/youtube/pinterest/instagram link and get the media.\n" +
+        "this is a bot for downloading tiktoks without watermarks, youtube media, pinterest pins/boards, instagram posts/reels, x/twitter videos, and searched music. no ads, no spam, no sponsors.\n" +
+        "send a tiktok/youtube/pinterest/instagram/x link and get the media.\n" +
         "send text query to search tracks and download one as mp3 (or use /music <query>).\n" +
         "use !yt <query> or !ytm <query> to force a music search provider.\n" +
         "use !v / !a / !bv / !ba before a url to override the youtube download preset for one download.\n" +

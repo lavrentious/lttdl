@@ -1,6 +1,6 @@
 # lttdl
 
-a telegram bot for downloading media without watermarks. supports tiktok, youtube, instagram, pinterest, and music search. no ads, no sponsors.
+a telegram bot for downloading media without watermarks. supports tiktok, youtube, instagram, pinterest, x/twitter, and music search. no ads, no sponsors.
 
 ## supported sources
 
@@ -9,6 +9,7 @@ a telegram bot for downloading media without watermarks. supports tiktok, youtub
 | tiktok | [@tobyg74/tiktok-api-dl](https://github.com/tobyg74/tiktok-api-dl) | watermark-free video, multiple provider fallbacks (v1/v2/v3) |
 | youtube | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | video, audio-only, quality presets |
 | instagram | [instaloader](https://github.com/instaloader/instaloader) | posts, reels |
+| x / twitter | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | videos/gifs only (no photos); `/video/N` links get that video, plain post links get all of them |
 | pinterest | [pinterest-dl](https://github.com/sean1832/pinterest-dl) (custom [fork](https://github.com/lavrentious/pinterest-dl)) | pins, boards |
 | music search | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | search youtube / youtube music, download as mp3 |
 
@@ -23,7 +24,7 @@ a telegram bot for downloading media without watermarks. supports tiktok, youtub
 
 - bun >= 1.3
 - ffmpeg / ffprobe (required)
-- yt-dlp (youtube, music search)
+- yt-dlp (youtube, x/twitter, music search)
 - instaloader (instagram)
 - pinterest-dl (pinterest)
 
@@ -182,7 +183,7 @@ location /files/ {
 
 ## usage
 
-- send a tiktok / youtube / instagram / pinterest link → bot downloads and sends the media
+- send a tiktok / youtube / instagram / pinterest / x link → bot downloads and sends the media
 - `!v / !a / !bv / !ba <url>` → override youtube preset for a single download
 - send a text query → music search (or use `/music <query>`)
 - `!yt <query>` / `!ytm <query>` → music search with provider override
