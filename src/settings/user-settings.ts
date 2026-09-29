@@ -1,6 +1,11 @@
+import { Database } from "bun:sqlite";
 import { mkdirSync } from "fs";
 import path from "path";
-import { Database } from "bun:sqlite";
+import {
+  ALL_MUSIC_SEARCH_PROVIDERS,
+  DEFAULT_MUSIC_SEARCH_PROVIDER,
+  type MusicSearchProviderId,
+} from "src/dl/music/types";
 import {
   ALL_TIKTOK_PROVIDERS,
   type TiktokProvider,
@@ -9,27 +14,28 @@ import {
   ALL_YOUTUBE_PRESETS,
   DEFAULT_YOUTUBE_PRESET,
 } from "src/dl/platforms/youtube/types";
-import {
-  ALL_MUSIC_SEARCH_PROVIDERS,
-  DEFAULT_MUSIC_SEARCH_PROVIDER,
-  type MusicSearchProviderId,
-} from "src/dl/music/types";
 import type { YoutubePreset } from "src/dl/types";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
 
 export type FileShareMode = "always" | "as-fallback" | "never";
-export const ALL_FILE_SHARE_MODES: FileShareMode[] = ["always", "as-fallback", "never"];
+export const ALL_FILE_SHARE_MODES: FileShareMode[] = [
+  "always",
+  "as-fallback",
+  "never",
+];
 export const DEFAULT_FILE_SHARE_MODE: FileShareMode = "as-fallback";
 export const FILE_SHARE_MODE_LABELS: Record<FileShareMode, string> = {
-  "always": "always",
+  always: "always",
   "as-fallback": "as fallback",
-  "never": "never",
+  never: "never",
 };
 export const FILE_SHARE_MODE_DESCRIPTIONS: Record<FileShareMode, string> = {
-  "always": "`always` — copy every download to the share server and send a direct link.",
-  "as-fallback": "`as fallback` — send a link only when the Telegram upload fails or the file exceeds the size limit. \\(default\\)",
-  "never": "`never` — disable file sharing for your downloads.",
+  always:
+    "`always` — copy every download to the share server and send a direct link.",
+  "as-fallback":
+    "`as fallback` — send a link only when the Telegram upload fails or the file exceeds the size limit. \\(default\\)",
+  never: "`never` — disable file sharing for your downloads.",
 };
 
 export type UserSettings = {
@@ -143,7 +149,9 @@ function parseTiktokProviders(value: string): TiktokProvider[] {
     }
     return normalizeTiktokProviders(parsed);
   } catch (err) {
-    logger.warn(`failed to parse user settings tiktok providers: ${String(err)}`);
+    logger.warn(
+      `failed to parse user settings tiktok providers: ${String(err)}`,
+    );
     return [...DEFAULT_TIKTOK_PROVIDERS];
   }
 }
@@ -199,7 +207,10 @@ function ensureUserSettingsColumns(database: Database) {
   } catch {}
 }
 
-function upsertUserSettings(userId: number, nextSettings: UserSettings): UserSettings {
+function upsertUserSettings(
+  userId: number,
+  nextSettings: UserSettings,
+): UserSettings {
   getDbOrThrow()
     .query(
       `
@@ -264,13 +275,16 @@ export function getDefaultUserSettings(): UserSettings {
     fileShareMode: DEFAULT_USER_SETTINGS.fileShareMode,
     platformPreferences: {
       tiktok: {
-        providers: [...DEFAULT_USER_SETTINGS.platformPreferences.tiktok.providers],
+        providers: [
+          ...DEFAULT_USER_SETTINGS.platformPreferences.tiktok.providers,
+        ],
       },
       youtube: {
         preset: DEFAULT_USER_SETTINGS.platformPreferences.youtube.preset,
       },
       music: {
-        searchProvider: DEFAULT_USER_SETTINGS.platformPreferences.music.searchProvider,
+        searchProvider:
+          DEFAULT_USER_SETTINGS.platformPreferences.music.searchProvider,
         searchWithCookies:
           DEFAULT_USER_SETTINGS.platformPreferences.music.searchWithCookies,
       },
@@ -398,5 +412,8 @@ export function updateUserFileShareMode(
   mode: FileShareMode,
 ): UserSettings {
   const current = getUserSettings(userId);
-  return upsertUserSettings(userId, { ...current, fileShareMode: normalizeFileShareMode(mode) });
+  return upsertUserSettings(userId, {
+    ...current,
+    fileShareMode: normalizeFileShareMode(mode),
+  });
 }

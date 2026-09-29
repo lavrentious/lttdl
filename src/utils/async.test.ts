@@ -4,14 +4,10 @@ import { mapWithConcurrency, retryAsync, withTimeout } from "./async";
 
 describe("mapWithConcurrency", () => {
   test("preserves item order", async () => {
-    const result = await mapWithConcurrency(
-      [3, 1, 2],
-      2,
-      async (value) => {
-        await new Promise((resolve) => setTimeout(resolve, value * 5));
-        return value * 10;
-      },
-    );
+    const result = await mapWithConcurrency([3, 1, 2], 2, async (value) => {
+      await new Promise((resolve) => setTimeout(resolve, value * 5));
+      return value * 10;
+    });
 
     expect(result).toEqual([30, 10, 20]);
   });

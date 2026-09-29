@@ -1,4 +1,4 @@
-import type { Context, Filter } from "grammy";
+import type { Context } from "grammy";
 import type {
   GalleryEntry,
   MusicVariant,

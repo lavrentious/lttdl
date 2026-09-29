@@ -1,4 +1,7 @@
-import { DownloadError, OperationCancelledError } from "src/errors/download-error";
+import {
+  DownloadError,
+  OperationCancelledError,
+} from "src/errors/download-error";
 
 export function throwIfAborted(signal?: AbortSignal) {
   if (!signal?.aborted) {
@@ -123,7 +126,11 @@ export async function withTimeout<T>(
     : null;
 
   try {
-    return await Promise.race([promise, timeoutPromise, ...(abortPromise ? [abortPromise] : [])]);
+    return await Promise.race([
+      promise,
+      timeoutPromise,
+      ...(abortPromise ? [abortPromise] : []),
+    ]);
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId);

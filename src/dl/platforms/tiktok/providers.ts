@@ -1,15 +1,11 @@
 import { Downloader as fetchTiktok } from "@tobyg74/tiktok-api-dl";
-import type { TiktokAPIResponse } from "@tobyg74/tiktok-api-dl/lib/types/downloader/tiktokApiDownloader";
 import type { MusicalDownResponse } from "@tobyg74/tiktok-api-dl/lib/types/downloader/musicaldownDownloader";
 import type { SSSTikResponse } from "@tobyg74/tiktok-api-dl/lib/types/downloader/ssstikDownloader";
+import type { TiktokAPIResponse } from "@tobyg74/tiktok-api-dl/lib/types/downloader/tiktokApiDownloader";
 import { logger } from "src/utils/logger";
 import type { ResolvedContentEntry, ResolvedVariant } from "../../types";
 import type { TiktokProviderAdapter } from "./provider";
-import {
-  ALL_TIKTOK_PROVIDERS,
-  type TiktokProvider,
-  type TiktokProviderResult,
-} from "./types";
+import { type TiktokProvider, type TiktokProviderResult } from "./types";
 
 function buildPrimaryEntry(
   provider: TiktokProvider,
@@ -147,7 +143,9 @@ function normalizeV3Response(res: MusicalDownResponse): TiktokProviderResult {
   };
 }
 
-function normalizeKind(kind: "video" | "image" | "music"): TiktokProviderResult["kind"] {
+function normalizeKind(
+  kind: "video" | "image" | "music",
+): TiktokProviderResult["kind"] {
   return kind === "music" ? "audio" : kind;
 }
 

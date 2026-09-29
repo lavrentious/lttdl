@@ -1,10 +1,10 @@
 import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
+import type { DownloadProgress } from "src/dl/types";
 import { DownloadError } from "src/errors/download-error";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
-import type { DownloadProgress } from "src/dl/types";
 
 export const YT_DLP_BINARY = "yt-dlp";
 export const YT_DLP_COMMON_ARGS = ["--js-runtimes", "bun"] as const;
@@ -20,7 +20,10 @@ export function buildYtDlpArgs(
   return [
     YT_DLP_BINARY,
     ...YT_DLP_COMMON_ARGS,
-    ...remoteComponents.flatMap((component) => ["--remote-components", component]),
+    ...remoteComponents.flatMap((component) => [
+      "--remote-components",
+      component,
+    ]),
     ...(includeCookies && cookiesPath ? ["--cookies", cookiesPath] : []),
     ...args,
   ];
@@ -47,7 +50,10 @@ function prepareYtDlpCommand(cmd: string[]): {
   }
 
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "lttdl-yt-dlp-cookies-"));
-  const tempCookiesPath = path.join(tempDir, path.basename(cookiesPath) || "cookies.txt");
+  const tempCookiesPath = path.join(
+    tempDir,
+    path.basename(cookiesPath) || "cookies.txt",
+  );
   copyFileSync(cookiesPath, tempCookiesPath);
 
   const preparedCmd = [...cmd];

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import type { PhotoVariant } from "src/dl/downloader";
 import {
   buildImageLinksMessages,
   buildSingleMediaLinksMessage,
   splitLinkBlock,
 } from "./download-presentation";
-import type { PhotoVariant } from "src/dl/downloader";
 
 describe("splitLinkBlock", () => {
   test("splits oversized lines safely", () => {
@@ -17,9 +17,9 @@ describe("splitLinkBlock", () => {
 
 describe("buildSingleMediaLinksMessage", () => {
   test("formats selected and attempted links", () => {
-    expect(
-      buildSingleMediaLinksMessage(["https://a", "https://b"]),
-    ).toContain("other attempted links");
+    expect(buildSingleMediaLinksMessage(["https://a", "https://b"])).toContain(
+      "other attempted links",
+    );
   });
 });
 

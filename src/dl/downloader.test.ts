@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { DownloadError } from "src/errors/download-error";
-import type { PlatformHandler } from "./platform-handler";
 import { DownloadRouter } from "./downloader";
+import type { PlatformHandler } from "./platform-handler";
 
 function createHandler(
   platform: PlatformHandler["platform"],
@@ -25,7 +25,9 @@ describe("DownloadRouter", () => {
       createHandler("tiktok", "tiktok.com"),
     ]);
 
-    const handler = router.resolveHandler("https://www.tiktok.com/@user/video/1");
+    const handler = router.resolveHandler(
+      "https://www.tiktok.com/@user/video/1",
+    );
 
     expect(handler.platform).toBe("tiktok");
   });

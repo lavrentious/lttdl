@@ -1,8 +1,8 @@
 import { readFileSync } from "fs";
 import path from "path";
 import sharp from "sharp";
-import { config } from "./env-validation";
 import { withTimeout } from "./async";
+import { config } from "./env-validation";
 
 export async function getImageResolution(path: string) {
   const imageProcessTimeoutMs = config.get("IMAGE_PROCESS_TIMEOUT_MS");
@@ -110,14 +110,32 @@ export async function applyMemeText(
 
   if (topText) {
     const lines = _wrapText(topText.toUpperCase(), fontSize, maxTextWidth);
-    parts.push(_buildTextElement(lines, W / 2, edgePad, fontSize, strokeWidth, "hanging"));
+    parts.push(
+      _buildTextElement(
+        lines,
+        W / 2,
+        edgePad,
+        fontSize,
+        strokeWidth,
+        "hanging",
+      ),
+    );
   }
 
   if (bottomText) {
     const lines = _wrapText(bottomText.toUpperCase(), fontSize, maxTextWidth);
     const lineHeight = fontSize * 1.2;
     const blockStartY = H - edgePad - (lines.length - 1) * lineHeight;
-    parts.push(_buildTextElement(lines, W / 2, blockStartY, fontSize, strokeWidth, "auto"));
+    parts.push(
+      _buildTextElement(
+        lines,
+        W / 2,
+        blockStartY,
+        fontSize,
+        strokeWidth,
+        "auto",
+      ),
+    );
   }
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
@@ -141,7 +159,10 @@ export async function createCenteredSquareJpeg(
   size = 640,
 ) {
   const imageProcessTimeoutMs = config.get("IMAGE_PROCESS_TIMEOUT_MS");
-  const buffer = input instanceof Uint8Array ? Buffer.from(input) : Buffer.from(new Uint8Array(input));
+  const buffer =
+    input instanceof Uint8Array
+      ? Buffer.from(input)
+      : Buffer.from(new Uint8Array(input));
 
   await withTimeout(
     sharp(buffer)

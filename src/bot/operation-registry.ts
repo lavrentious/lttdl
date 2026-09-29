@@ -84,7 +84,9 @@ export function cancelTrackedOperation(
   }
 
   operation.cancelled = true;
-  operation.controller.abort(new OperationCancelledError("operation cancelled"));
+  operation.controller.abort(
+    new OperationCancelledError("operation cancelled"),
+  );
   return { status: "cancelled", operation };
 }
 

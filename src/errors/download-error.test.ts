@@ -17,18 +17,20 @@ describe("toDownloadError", () => {
   });
 
   test("converts timeout-like errors to timeout exceeded", () => {
-    expect(toDownloadError(new Error("yt-dlp music search timed out after 30000ms"))).toEqual(
-      new DownloadError("timeout exceeded"),
-    );
+    expect(
+      toDownloadError(new Error("yt-dlp music search timed out after 30000ms")),
+    ).toEqual(new DownloadError("timeout exceeded"));
   });
 
   test("maps cancellation to operation cancelled", () => {
-    expect(toDownloadError(new DOMException("The operation was aborted", "AbortError"))).toEqual(
-      new OperationCancelledError("operation cancelled"),
-    );
-    expect(toDownloadError(new OperationCancelledError("operation cancelled"))).toEqual(
-      new OperationCancelledError("operation cancelled"),
-    );
+    expect(
+      toDownloadError(
+        new DOMException("The operation was aborted", "AbortError"),
+      ),
+    ).toEqual(new OperationCancelledError("operation cancelled"));
+    expect(
+      toDownloadError(new OperationCancelledError("operation cancelled")),
+    ).toEqual(new OperationCancelledError("operation cancelled"));
   });
 
   test("keeps unknown failures generic", () => {
@@ -47,8 +49,12 @@ describe("isTimeoutError", () => {
 
 describe("isCancelledError", () => {
   test("recognizes cancellation-shaped failures", () => {
-    expect(isCancelledError(new OperationCancelledError("operation cancelled"))).toBe(true);
-    expect(isCancelledError(new Error("download cancelled by user"))).toBe(true);
+    expect(
+      isCancelledError(new OperationCancelledError("operation cancelled")),
+    ).toBe(true);
+    expect(isCancelledError(new Error("download cancelled by user"))).toBe(
+      true,
+    );
     expect(isCancelledError(new Error("request timeout"))).toBe(false);
   });
 });

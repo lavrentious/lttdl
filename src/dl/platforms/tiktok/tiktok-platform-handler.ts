@@ -1,6 +1,6 @@
+import { isRetryableNetworkError } from "src/dl/asset-downloader";
 import { DownloadError } from "src/errors/download-error";
 import { retryAsync, throwIfAborted, withTimeout } from "src/utils/async";
-import { isRetryableNetworkError } from "src/dl/asset-downloader";
 import { config } from "src/utils/env-validation";
 import type { PlatformHandler, ResolveContext } from "../../platform-handler";
 import type {
@@ -58,7 +58,9 @@ function pickDominantKind(results: TiktokProviderResult[]): ContentKind {
   return bestKind;
 }
 
-function mergeEntriesById(results: TiktokProviderResult[]): ResolvedContentEntry[] {
+function mergeEntriesById(
+  results: TiktokProviderResult[],
+): ResolvedContentEntry[] {
   const order: string[] = [];
   const merged = new Map<string, ResolvedContentEntry>();
 
@@ -95,7 +97,8 @@ export function reconcileTiktokResults(
 
   const kind = pickDominantKind(results);
   const compatible = results.filter((result) => result.kind === kind);
-  const title = compatible.map((result) => result.title).find((value) => !!value) || null;
+  const title =
+    compatible.map((result) => result.title).find((value) => !!value) || null;
   const entries = mergeEntriesById(compatible);
 
   if (!entries.length) {
@@ -143,7 +146,10 @@ export class TiktokPlatformHandler implements PlatformHandler {
       return new Provider();
     });
     const settled = await Promise.allSettled(
-      adapters.map(async (adapter) => await resolveWithRetry(adapter, url, options?.signal)),
+      adapters.map(
+        async (adapter) =>
+          await resolveWithRetry(adapter, url, options?.signal),
+      ),
     );
     const results = settled.flatMap((result) =>
       result.status === "fulfilled" ? [result.value] : [],

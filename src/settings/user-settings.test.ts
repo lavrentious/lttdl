@@ -64,13 +64,17 @@ describe("user settings", () => {
   test("returns youtube preset default", () => {
     const settings = getDefaultUserSettings();
 
-    expect(settings.platformPreferences.youtube.preset).toBe("auto-video-audio");
+    expect(settings.platformPreferences.youtube.preset).toBe(
+      "auto-video-audio",
+    );
   });
 
   test("returns music search provider default", () => {
     const settings = getDefaultUserSettings();
 
-    expect(settings.platformPreferences.music.searchProvider).toBe("youtube-music");
+    expect(settings.platformPreferences.music.searchProvider).toBe(
+      "youtube-music",
+    );
   });
 
   test("returns music search cookies default", () => {
@@ -111,7 +115,9 @@ describe("user settings", () => {
 
     expect(updated.verboseOutput).toBe(true);
     expect(updated.platformPreferences.youtube.preset).toBe("mid-audio");
-    expect(updated.platformPreferences.music.searchProvider).toBe("youtube-music");
+    expect(updated.platformPreferences.music.searchProvider).toBe(
+      "youtube-music",
+    );
     expect(updated.platformPreferences.music.searchWithCookies).toBe(true);
   });
 
@@ -125,7 +131,9 @@ describe("user settings", () => {
 
     expect(updated.platformPreferences.tiktok.providers).toEqual(["v1", "v2"]);
     expect(updated.platformPreferences.youtube.preset).toBe("fast-720");
-    expect(updated.platformPreferences.music.searchProvider).toBe("youtube-music");
+    expect(updated.platformPreferences.music.searchProvider).toBe(
+      "youtube-music",
+    );
     expect(updated.platformPreferences.music.searchWithCookies).toBe(true);
   });
 

@@ -121,7 +121,10 @@ function escapeMarkdownV2Url(url: string): string {
 }
 
 function getPageCount(results: MusicSearchResult[]): number {
-  return Math.max(1, Math.ceil(results.length / config.get("BOT_MUSIC_PAGE_SIZE")));
+  return Math.max(
+    1,
+    Math.ceil(results.length / config.get("BOT_MUSIC_PAGE_SIZE")),
+  );
 }
 
 function clampPage(page: number, results: MusicSearchResult[]): number {
@@ -143,7 +146,9 @@ function createProgressUpdater(
   loadingMessage: { chat: { id: number }; message_id: number },
   operationId: string,
 ) {
-  const progressUpdateIntervalMs = config.get("BOT_PROGRESS_UPDATE_INTERVAL_MS");
+  const progressUpdateIntervalMs = config.get(
+    "BOT_PROGRESS_UPDATE_INTERVAL_MS",
+  );
   let lastSentAt = 0;
   let lastText = "downloading...";
 
@@ -495,7 +500,8 @@ async function runMusicSearch(
     messageId: loadingMessage.message_id,
   });
   const userSettings = getUserSettings(ctx.from.id);
-  const provider = providerOverride ?? userSettings.platformPreferences.music.searchProvider;
+  const provider =
+    providerOverride ?? userSettings.platformPreferences.music.searchProvider;
 
   try {
     const results = await searchMusic(provider, query, musicSearchLimit, {
@@ -660,7 +666,11 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
     chatId: loadingMessage.chat.id,
     messageId: loadingMessage.message_id,
   });
-  const progressUpdater = createProgressUpdater(ctx, loadingMessage, operation.id);
+  const progressUpdater = createProgressUpdater(
+    ctx,
+    loadingMessage,
+    operation.id,
+  );
   const userSettings = getUserSettings(data.userId);
 
   try {
@@ -692,7 +702,9 @@ export async function musicCallbackQuery(ctx: CallbackQueryContext<Context>) {
     completeTrackedOperation(operation.id);
     if (isCancelledError(err)) {
       pendingSearches.set(data.token, pending);
-      logger.info(`cancelled music download ${selected.url} for ${ctx.from.id}`);
+      logger.info(
+        `cancelled music download ${selected.url} for ${ctx.from.id}`,
+      );
     } else {
       logError(err);
       deleteMessageSafe(ctx, loadingMessage);

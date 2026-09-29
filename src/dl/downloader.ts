@@ -1,6 +1,6 @@
-import { config } from "src/utils/env-validation";
-import { mapWithConcurrency, throwIfAborted } from "src/utils/async";
 import { DownloadError, toDownloadError } from "src/errors/download-error";
+import { mapWithConcurrency, throwIfAborted } from "src/utils/async";
+import { config } from "src/utils/env-validation";
 import { AssetDownloader } from "./asset-downloader";
 import { AssetProcessor } from "./asset-processor";
 import type { PlatformHandler, ResolveContext } from "./platform-handler";
@@ -14,7 +14,6 @@ import type {
   DownloadOptions,
   DownloadProgress,
   DownloadResult,
-  GalleryEntry,
   MusicVariant,
   PhotoVariant,
   ResolvedContent,
@@ -79,14 +78,12 @@ type AggregateDownloadSummary = {
   totalBytes: number;
 };
 
-function createSequentialProgressMapper(
-  options: {
-    index: number;
-    total: number;
-    message: string;
-    onProgress?: (progress: DownloadProgress) => void | Promise<void>;
-  },
-) {
+function createSequentialProgressMapper(options: {
+  index: number;
+  total: number;
+  message: string;
+  onProgress?: (progress: DownloadProgress) => void | Promise<void>;
+}) {
   return async (progress: DownloadProgress) => {
     if (!options.onProgress) {
       return;
@@ -99,7 +96,9 @@ function createSequentialProgressMapper(
 
     const sequentialPercent =
       typeof progress.percent === "number"
-        ? ((options.index + progress.percent / 100) / Math.max(options.total, 1)) * 100
+        ? ((options.index + progress.percent / 100) /
+            Math.max(options.total, 1)) *
+          100
         : undefined;
 
     await options.onProgress({
@@ -114,80 +113,81 @@ function createSequentialProgressMapper(
   };
 }
 
-function createAggregateProgressMapper(
-  options: {
-    total: number;
-    message: string;
-    onProgress?: (progress: DownloadProgress) => void | Promise<void>;
-  },
-) {
-  const states: AggregateDownloadState[] = Array.from({ length: options.total }, () => ({}));
+function createAggregateProgressMapper(options: {
+  total: number;
+  message: string;
+  onProgress?: (progress: DownloadProgress) => void | Promise<void>;
+}) {
+  const states: AggregateDownloadState[] = Array.from(
+    { length: options.total },
+    () => ({}),
+  );
 
-  return (index: number) =>
-    async (progress: DownloadProgress) => {
-      if (!options.onProgress) {
-        return;
-      }
+  return (index: number) => async (progress: DownloadProgress) => {
+    if (!options.onProgress) {
+      return;
+    }
 
-      if (progress.stage !== "download") {
-        await options.onProgress(progress);
-        return;
-      }
+    if (progress.stage !== "download") {
+      await options.onProgress(progress);
+      return;
+    }
 
-      states[index] = {
-        percent: progress.percent,
-        bytesDownloaded: progress.bytesDownloaded,
-        totalBytes: progress.totalBytes,
-        speed: progress.speed,
-        eta: progress.eta,
-      };
-
-      const aggregate = states.reduce<AggregateDownloadSummary>(
-        (acc, state) => {
-          if (typeof state.percent === "number") {
-            acc.percentSum += state.percent;
-            acc.percentCount += 1;
-          }
-
-          if (typeof state.bytesDownloaded === "number") {
-            acc.bytesDownloaded += state.bytesDownloaded;
-          }
-
-          if (typeof state.totalBytes === "number") {
-            acc.totalBytes += state.totalBytes;
-          }
-
-          return acc;
-        },
-        {
-          percentSum: 0,
-          percentCount: 0,
-          bytesDownloaded: 0,
-          totalBytes: 0,
-        },
-      );
-
-      const currentState = states[index];
-      const totalBytes = aggregate.totalBytes > 0 ? aggregate.totalBytes : undefined;
-      const bytesDownloaded =
-        totalBytes !== undefined ? aggregate.bytesDownloaded : undefined;
-      const percent =
-        totalBytes !== undefined && totalBytes > 0
-          ? (aggregate.bytesDownloaded / totalBytes) * 100
-          : aggregate.percentCount > 0
-            ? aggregate.percentSum / Math.max(options.total, 1)
-            : undefined;
-
-      await options.onProgress({
-        stage: "download",
-        message: options.message,
-        percent,
-        bytesDownloaded,
-        totalBytes,
-        speed: currentState?.speed,
-        eta: currentState?.eta,
-      });
+    states[index] = {
+      percent: progress.percent,
+      bytesDownloaded: progress.bytesDownloaded,
+      totalBytes: progress.totalBytes,
+      speed: progress.speed,
+      eta: progress.eta,
     };
+
+    const aggregate = states.reduce<AggregateDownloadSummary>(
+      (acc, state) => {
+        if (typeof state.percent === "number") {
+          acc.percentSum += state.percent;
+          acc.percentCount += 1;
+        }
+
+        if (typeof state.bytesDownloaded === "number") {
+          acc.bytesDownloaded += state.bytesDownloaded;
+        }
+
+        if (typeof state.totalBytes === "number") {
+          acc.totalBytes += state.totalBytes;
+        }
+
+        return acc;
+      },
+      {
+        percentSum: 0,
+        percentCount: 0,
+        bytesDownloaded: 0,
+        totalBytes: 0,
+      },
+    );
+
+    const currentState = states[index];
+    const totalBytes =
+      aggregate.totalBytes > 0 ? aggregate.totalBytes : undefined;
+    const bytesDownloaded =
+      totalBytes !== undefined ? aggregate.bytesDownloaded : undefined;
+    const percent =
+      totalBytes !== undefined && totalBytes > 0
+        ? (aggregate.bytesDownloaded / totalBytes) * 100
+        : aggregate.percentCount > 0
+          ? aggregate.percentSum / Math.max(options.total, 1)
+          : undefined;
+
+    await options.onProgress({
+      stage: "download",
+      message: options.message,
+      percent,
+      bytesDownloaded,
+      totalBytes,
+      speed: currentState?.speed,
+      eta: currentState?.eta,
+    });
+  };
 }
 
 async function buildVideoResult(
@@ -227,7 +227,11 @@ async function buildVideoResult(
         },
         { signal },
       );
-      variants.splice(0, variants.length, ...sortByResolution(downloadedVariants));
+      variants.splice(
+        0,
+        variants.length,
+        ...sortByResolution(downloadedVariants),
+      );
     } else {
       for (const [index, variant] of entry.variants.entries()) {
         throwIfAborted(signal);
@@ -432,7 +436,9 @@ export async function downloadContent(
     }
 
     if (!handler.resolve) {
-      throw new DownloadError(`platform ${handler.platform} is not implemented`);
+      throw new DownloadError(
+        `platform ${handler.platform} is not implemented`,
+      );
     }
 
     const resolved = await handler.resolve(url, context, options);
@@ -452,7 +458,13 @@ export async function downloadContent(
         options.signal,
       );
     } else if (resolved.kind === "image") {
-      res = await buildImageResult(resolved, tempDir, strategy, onProgress, options.signal);
+      res = await buildImageResult(
+        resolved,
+        tempDir,
+        strategy,
+        onProgress,
+        options.signal,
+      );
     } else {
       res = await buildAudioResult(
         resolved,

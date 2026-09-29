@@ -29,11 +29,16 @@ function getUserJobDayLimit(): number {
 }
 
 function pruneExpiredTimestamps(timestamps: number[], now: number): number[] {
-  return timestamps.filter((timestamp) => now - timestamp < getUserJobDayWindowMs());
+  return timestamps.filter(
+    (timestamp) => now - timestamp < getUserJobDayWindowMs(),
+  );
 }
 
 function getUserJobTimestamps(userId: number, now: number): number[] {
-  const pruned = pruneExpiredTimestamps(jobTimestampsByUser.get(userId) || [], now);
+  const pruned = pruneExpiredTimestamps(
+    jobTimestampsByUser.get(userId) || [],
+    now,
+  );
   jobTimestampsByUser.set(userId, pruned);
   return pruned;
 }
@@ -43,14 +48,19 @@ export function checkUserJobRateLimit(
   now = Date.now(),
 ): UserJobRateLimitResult {
   const timestamps = getUserJobTimestamps(userId, now);
-  const minuteStarts = timestamps.filter((timestamp) => now - timestamp < getUserJobMinuteWindowMs());
+  const minuteStarts = timestamps.filter(
+    (timestamp) => now - timestamp < getUserJobMinuteWindowMs(),
+  );
 
   if (minuteStarts.length >= getUserJobMinuteLimit()) {
     const oldestMinuteTimestamp = minuteStarts[0]!;
     return {
       allowed: false,
       window: "minute",
-      retryAfterMs: Math.max(getUserJobMinuteWindowMs() - (now - oldestMinuteTimestamp), 0),
+      retryAfterMs: Math.max(
+        getUserJobMinuteWindowMs() - (now - oldestMinuteTimestamp),
+        0,
+      ),
     };
   }
 
@@ -59,7 +69,10 @@ export function checkUserJobRateLimit(
     return {
       allowed: false,
       window: "day",
-      retryAfterMs: Math.max(getUserJobDayWindowMs() - (now - oldestDayTimestamp), 0),
+      retryAfterMs: Math.max(
+        getUserJobDayWindowMs() - (now - oldestDayTimestamp),
+        0,
+      ),
     };
   }
 
@@ -80,9 +93,14 @@ export function recordUserJobStart(
   return result;
 }
 
-export function formatUserJobRateLimitMessage(result: Extract<UserJobRateLimitResult, {
-  allowed: false;
-}>): string {
+export function formatUserJobRateLimitMessage(
+  result: Extract<
+    UserJobRateLimitResult,
+    {
+      allowed: false;
+    }
+  >,
+): string {
   if (result.window === "minute") {
     return `rate limit exceeded: max ${getUserJobMinuteLimit()} heavy jobs per minute. try again in ${Math.ceil(result.retryAfterMs / 1000)}s.`;
   }

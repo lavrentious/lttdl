@@ -1,7 +1,7 @@
 import { $, spawn } from "bun";
 import { existsSync, renameSync, rmSync } from "fs";
-import { config } from "./env-validation";
 import { withTimeout } from "./async";
+import { config } from "./env-validation";
 import { logger } from "./logger";
 
 function getTypeFromBinaryData(binaryData: Uint8Array) {
@@ -106,7 +106,9 @@ export async function getVideoMetadata(path: string): Promise<{
   };
 }
 
-export async function getAudioDuration(path: string): Promise<number | undefined> {
+export async function getAudioDuration(
+  path: string,
+): Promise<number | undefined> {
   const ffprobeTimeoutMs = config.get("VIDEO_FFPROBE_TIMEOUT_MS");
   const output = await withTimeout(
     $`ffprobe -v error -show_entries format=duration -of json ${path}`.text(),
@@ -133,7 +135,9 @@ type AudioTagOptions = {
 };
 
 export async function isMp4File(path: string): Promise<boolean> {
-  const header = new Uint8Array(await Bun.file(path).slice(0, 12).arrayBuffer());
+  const header = new Uint8Array(
+    await Bun.file(path).slice(0, 12).arrayBuffer(),
+  );
   return getTypeFromBinaryData(header) === "mp4";
 }
 
@@ -200,7 +204,10 @@ export async function writeMp3Metadata(
   await runFfmpeg(args, "ffmpeg audio metadata");
 }
 
-export async function ensureMp4Video(inputPath: string, outputPath: string): Promise<void> {
+export async function ensureMp4Video(
+  inputPath: string,
+  outputPath: string,
+): Promise<void> {
   if (existsSync(outputPath)) {
     rmSync(outputPath);
   }

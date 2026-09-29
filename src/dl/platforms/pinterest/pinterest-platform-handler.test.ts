@@ -76,12 +76,16 @@ describe("PinterestPlatformHandler", () => {
       }),
     });
 
-    const result = await handler.download!("https://pin.it/example", {}, {
-      tempDir: "/tmp",
-      onProgress: (progress) => {
-        progressStages.push(progress.stage);
+    const result = await handler.download!(
+      "https://pin.it/example",
+      {},
+      {
+        tempDir: "/tmp",
+        onProgress: (progress) => {
+          progressStages.push(progress.stage);
+        },
       },
-    });
+    );
 
     expect(result.res.contentType).toBe("image");
     if (result.res.contentType !== "image") {
@@ -277,7 +281,11 @@ describe("PinterestPlatformHandler", () => {
       }),
     });
 
-    await handler.download!("https://pin.it/sRJJeGlaz", {}, { tempDir: "/tmp" });
+    await handler.download!(
+      "https://pin.it/sRJJeGlaz",
+      {},
+      { tempDir: "/tmp" },
+    );
 
     expect(capturedCmd).toContain(canonical);
     expect(capturedCmd).not.toContain("https://pin.it/sRJJeGlaz");

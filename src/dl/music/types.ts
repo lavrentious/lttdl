@@ -2,9 +2,13 @@ export const ALL_MUSIC_SEARCH_PROVIDERS = ["youtube-music", "youtube"] as const;
 
 export type MusicSearchProviderId = (typeof ALL_MUSIC_SEARCH_PROVIDERS)[number];
 
-export const DEFAULT_MUSIC_SEARCH_PROVIDER: MusicSearchProviderId = "youtube-music";
+export const DEFAULT_MUSIC_SEARCH_PROVIDER: MusicSearchProviderId =
+  "youtube-music";
 
-export const MUSIC_SEARCH_PROVIDER_LABELS: Record<MusicSearchProviderId, string> = {
+export const MUSIC_SEARCH_PROVIDER_LABELS: Record<
+  MusicSearchProviderId,
+  string
+> = {
   "youtube-music": "youtube music",
   youtube: "youtube videos",
 };

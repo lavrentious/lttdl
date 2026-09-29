@@ -4,14 +4,14 @@ a telegram bot for downloading media without watermarks. supports tiktok, youtub
 
 ## supported sources
 
-| source | tool | notes |
-|--------|------|-------|
-| tiktok | [@tobyg74/tiktok-api-dl](https://github.com/tobyg74/tiktok-api-dl) | watermark-free video, multiple provider fallbacks (v1/v2/v3) |
-| youtube | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | video, audio-only, quality presets |
-| instagram | [instaloader](https://github.com/instaloader/instaloader) | posts, reels |
-| x / twitter | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | videos/gifs only (no photos); `/video/N` links get that video, plain post links get all of them |
-| pinterest | [pinterest-dl](https://github.com/sean1832/pinterest-dl) (custom [fork](https://github.com/lavrentious/pinterest-dl)) | pins, boards |
-| music search | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | search youtube / youtube music, download as mp3 |
+| source       | tool                                                                                                                  | notes                                                                                           |
+| ------------ | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| tiktok       | [@tobyg74/tiktok-api-dl](https://github.com/tobyg74/tiktok-api-dl)                                                    | watermark-free video, multiple provider fallbacks (v1/v2/v3)                                    |
+| youtube      | [yt-dlp](https://github.com/yt-dlp/yt-dlp)                                                                            | video, audio-only, quality presets                                                              |
+| instagram    | [instaloader](https://github.com/instaloader/instaloader)                                                             | posts, reels                                                                                    |
+| x / twitter  | [yt-dlp](https://github.com/yt-dlp/yt-dlp)                                                                            | videos/gifs only (no photos); `/video/N` links get that video, plain post links get all of them |
+| pinterest    | [pinterest-dl](https://github.com/sean1832/pinterest-dl) (custom [fork](https://github.com/lavrentious/pinterest-dl)) | pins, boards                                                                                    |
+| music search | [yt-dlp](https://github.com/yt-dlp/yt-dlp)                                                                            | search youtube / youtube music, download as mp3                                                 |
 
 ## tech
 
@@ -89,6 +89,7 @@ systemctl enable --now lttdl
 all config is via environment variables. see `example.env` for the full reference with defaults.
 
 **required:**
+
 - `BOT_TOKEN` — from [@BotFather](https://t.me/BotFather)
 - `NODE_ENV` — `production` or `development`
 
@@ -109,6 +110,7 @@ per-user configuration, accessible via the `/settings` command:
 send a plain text query or `/music <query>` to search for a track and download it as mp3. results are paginated with inline buttons.
 
 to override the configured provider for a single search, prefix the query:
+
 - `!yt <query>` — search youtube videos
 - `!ytm <query>` — search youtube music
 
@@ -118,12 +120,12 @@ works with both plain text messages and `/music !yt <query>`.
 
 prefix a url with one of the following to override your youtube preset for a single download:
 
-| prefix | equivalent preset | description |
-|--------|-------------------|-------------|
+| prefix                      | equivalent preset  | description      |
+| --------------------------- | ------------------ | ---------------- |
 | `!v <url>` / `!video <url>` | `auto-video-audio` | auto video+audio |
-| `!a <url>` / `!audio <url>` | `auto-audio-only` | auto audio only |
-| `!bv <url>` | `best` | best video+audio |
-| `!ba <url>` | `best-audio` | best audio (mp3) |
+| `!a <url>` / `!audio <url>` | `auto-audio-only`  | auto audio only  |
+| `!bv <url>`                 | `best`             | best video+audio |
+| `!ba <url>`                 | `best-audio`       | best audio (mp3) |
 
 ### cookies
 
@@ -148,6 +150,7 @@ FILE_SHARE_DIR=./shared
 ```
 
 nginx location block (static):
+
 ```nginx
 location /files/ {
     alias /opt/lttdl/shared/;
@@ -167,6 +170,7 @@ FILE_SHARE_BASE_URL=https://example.com/files
 ```
 
 nginx reverse proxy (for builtin mode):
+
 ```nginx
 location /files/ {
     proxy_pass http://127.0.0.1:3000/;
@@ -175,11 +179,11 @@ location /files/ {
 
 **optional knobs:**
 
-| variable | default | description |
-|----------|---------|-------------|
-| `FILE_SHARE_TTL_S` | `3600` | how long shared files are kept before deletion |
-| `FILE_SHARE_CLEANUP_INTERVAL_S` | `300` | how often expired files are purged (seconds) |
-| `FILE_SHARE_MAX_DIR_SIZE_MB` | `0` | total storage cap for `FILE_SHARE_DIR` in MB; `0` = no limit. new shares are skipped (with a warning) when the cap would be exceeded |
+| variable                        | default | description                                                                                                                          |
+| ------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `FILE_SHARE_TTL_S`              | `3600`  | how long shared files are kept before deletion                                                                                       |
+| `FILE_SHARE_CLEANUP_INTERVAL_S` | `300`   | how often expired files are purged (seconds)                                                                                         |
+| `FILE_SHARE_MAX_DIR_SIZE_MB`    | `0`     | total storage cap for `FILE_SHARE_DIR` in MB; `0` = no limit. new shares are skipped (with a warning) when the cap would be exceeded |
 
 ## usage
 

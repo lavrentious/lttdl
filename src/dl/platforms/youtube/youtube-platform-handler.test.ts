@@ -566,7 +566,11 @@ describe("YoutubePlatformHandler", () => {
     });
 
     await expect(
-      handler.download!("https://youtu.be/example", { youtubePreset: "best" }, {}),
+      handler.download!(
+        "https://youtu.be/example",
+        { youtubePreset: "best" },
+        {},
+      ),
     ).rejects.toThrow(new DownloadError("yt-dlp is not installed"));
   });
 
@@ -588,8 +592,12 @@ describe("YoutubePlatformHandler", () => {
             stderr: "",
           };
         }
-        await hooks?.onStdoutLine?.("[download]  25.0% of 100.00MiB at 5.00MiB/s ETA 00:15");
-        await hooks?.onStdoutLine?.("[VideoRemuxer] Remuxing video from webm to mp4");
+        await hooks?.onStdoutLine?.(
+          "[download]  25.0% of 100.00MiB at 5.00MiB/s ETA 00:15",
+        );
+        await hooks?.onStdoutLine?.(
+          "[VideoRemuxer] Remuxing video from webm to mp4",
+        );
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
         const finalPath = outputTemplate.replace("%(ext)s", "mp4");
@@ -641,7 +649,9 @@ describe("YoutubePlatformHandler", () => {
             stderr: "",
           };
         }
-        await hooks?.onStderrLine?.("[download]  75.0% of 100.00MiB at 5.00MiB/s ETA 00:05");
+        await hooks?.onStderrLine?.(
+          "[download]  75.0% of 100.00MiB at 5.00MiB/s ETA 00:05",
+        );
         const outputArgIndex = cmd.indexOf("--output");
         const outputTemplate = cmd[outputArgIndex + 1]!;
         const finalPath = outputTemplate.replace("%(ext)s", "mp4");

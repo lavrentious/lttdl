@@ -1,8 +1,11 @@
-import { YoutubeMusicProvider } from "./providers/youtube-music-provider";
 import type { MusicProvider } from "./provider";
+import { YoutubeMusicProvider } from "./providers/youtube-music-provider";
 import type { MusicSearchProviderId } from "./types";
 
-export const MUSIC_PROVIDER_REGISTRY: Record<MusicSearchProviderId, MusicProvider> = {
+export const MUSIC_PROVIDER_REGISTRY: Record<
+  MusicSearchProviderId,
+  MusicProvider
+> = {
   "youtube-music": new YoutubeMusicProvider({
     id: "youtube-music",
     searchMode: "music",

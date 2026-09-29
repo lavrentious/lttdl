@@ -17,7 +17,11 @@ export type MusicSearchOptions = {
 export interface MusicProvider {
   readonly id: MusicSearchProviderId;
 
-  search(query: string, limit: number, options?: MusicSearchOptions): Promise<MusicSearchResult[]>;
+  search(
+    query: string,
+    limit: number,
+    options?: MusicSearchOptions,
+  ): Promise<MusicSearchResult[]>;
 
   download(
     result: MusicSearchResult,

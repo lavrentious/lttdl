@@ -1,14 +1,14 @@
 import { randomUUIDv7 } from "bun";
 import { existsSync, rmSync } from "fs";
 import path from "path";
+import { isLikelyOversizeVideo } from "src/dl/size-guard";
 import {
   DownloadError,
   OperationCancelledError,
 } from "src/errors/download-error";
+import { throwIfAborted, withTimeout } from "src/utils/async";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
-import { isLikelyOversizeVideo } from "src/dl/size-guard";
-import { throwIfAborted, withTimeout } from "src/utils/async";
 import { getVideoMetadata } from "src/utils/video";
 import { AssetDownloader } from "../../asset-downloader";
 import { AssetProcessor } from "../../asset-processor";
@@ -183,7 +183,10 @@ async function resolveShortLink(
   return response.url || url;
 }
 
-async function runCommand(cmd: string[], hooks: CommandHooks = {}): Promise<CommandResult> {
+async function runCommand(
+  cmd: string[],
+  hooks: CommandHooks = {},
+): Promise<CommandResult> {
   logger.debug(`running command: ${cmd.join(" ")}`);
   const signal = hooks.signal;
   const spawned = Bun.spawn({
@@ -303,75 +306,81 @@ async function downloadVideoItem(
     message: `downloading video stream for ${item.origin}`,
   });
   throwIfAborted(signal);
-  const { exitCode, stderr } = await runCommand([
-    ffmpegPath,
-    "-y",
-    "-nostats",
-    "-progress",
-    "pipe:2",
-    "-i",
-    videoUrl,
-    "-c",
-    "copy",
-    outputPath,
-  ], {
-    signal,
-    onStderrLine: async (line) => {
-      const [key, rawValue = ""] = line.split("=", 2);
-      const value = rawValue.trim();
+  const { exitCode, stderr } = await runCommand(
+    [
+      ffmpegPath,
+      "-y",
+      "-nostats",
+      "-progress",
+      "pipe:2",
+      "-i",
+      videoUrl,
+      "-c",
+      "copy",
+      outputPath,
+    ],
+    {
+      signal,
+      onStderrLine: async (line) => {
+        const [key, rawValue = ""] = line.split("=", 2);
+        const value = rawValue.trim();
 
-      if (!key) {
-        return;
-      }
-
-      if (key === "total_size") {
-        const bytesDownloaded = Number(value);
-        if (Number.isFinite(bytesDownloaded) && bytesDownloaded >= 0) {
-          progressState.bytesDownloaded = bytesDownloaded;
+        if (!key) {
+          return;
         }
-      } else if (key === "out_time_ms") {
-        const outTimeMs = Number(value);
-        if (Number.isFinite(outTimeMs) && outTimeMs >= 0) {
-          progressState.outTimeSeconds = outTimeMs / 1_000_000;
-        }
-      } else if (key === "speed") {
-        progressState.speed = value;
-      } else if (key !== "progress") {
-        return;
-      }
 
-      if (key === "progress" && value === "continue") {
-        await onProgress?.({
-          stage: "download",
-          message: "downloading pinterest video",
-          percent:
-            durationSeconds && progressState.outTimeSeconds !== undefined
-              ? Math.min((progressState.outTimeSeconds / durationSeconds) * 100, 100)
-              : undefined,
-          bytesDownloaded: progressState.bytesDownloaded,
-          speed: progressState.speed,
-          eta:
-            durationSeconds &&
-            progressState.outTimeSeconds !== undefined &&
-            progressState.speed &&
-            progressState.outTimeSeconds < durationSeconds
-              ? `${Math.max(
-                  Math.ceil(durationSeconds - progressState.outTimeSeconds),
-                  0,
-                )}s`
-              : undefined,
-        });
-      } else if (key === "progress" && value === "end") {
-        await onProgress?.({
-          stage: "download",
-          message: "downloading pinterest video",
-          percent: 100,
-          bytesDownloaded: progressState.bytesDownloaded,
-          speed: progressState.speed,
-        });
-      }
+        if (key === "total_size") {
+          const bytesDownloaded = Number(value);
+          if (Number.isFinite(bytesDownloaded) && bytesDownloaded >= 0) {
+            progressState.bytesDownloaded = bytesDownloaded;
+          }
+        } else if (key === "out_time_ms") {
+          const outTimeMs = Number(value);
+          if (Number.isFinite(outTimeMs) && outTimeMs >= 0) {
+            progressState.outTimeSeconds = outTimeMs / 1_000_000;
+          }
+        } else if (key === "speed") {
+          progressState.speed = value;
+        } else if (key !== "progress") {
+          return;
+        }
+
+        if (key === "progress" && value === "continue") {
+          await onProgress?.({
+            stage: "download",
+            message: "downloading pinterest video",
+            percent:
+              durationSeconds && progressState.outTimeSeconds !== undefined
+                ? Math.min(
+                    (progressState.outTimeSeconds / durationSeconds) * 100,
+                    100,
+                  )
+                : undefined,
+            bytesDownloaded: progressState.bytesDownloaded,
+            speed: progressState.speed,
+            eta:
+              durationSeconds &&
+              progressState.outTimeSeconds !== undefined &&
+              progressState.speed &&
+              progressState.outTimeSeconds < durationSeconds
+                ? `${Math.max(
+                    Math.ceil(durationSeconds - progressState.outTimeSeconds),
+                    0,
+                  )}s`
+                : undefined,
+          });
+        } else if (key === "progress" && value === "end") {
+          await onProgress?.({
+            stage: "download",
+            message: "downloading pinterest video",
+            percent: 100,
+            bytesDownloaded: progressState.bytesDownloaded,
+            speed: progressState.speed,
+          });
+        }
+      },
     },
-  });
+  );
 
   if (exitCode !== 0 || !existsSync(outputPath)) {
     logger.warn(`failed to download pinterest video: ${stderr.trim()}`);
@@ -385,19 +394,19 @@ async function downloadVideoItem(
   }
 
   const streamResolution = item.media_stream?.video?.resolution;
-  const localMetadata = await getVideoMetadata(outputPath).catch(() => undefined);
-  const resolution =
-    localMetadata
-      ? {
-          width: localMetadata.width,
-          height: localMetadata.height,
-        }
-      :
-    streamResolution &&
-    streamResolution[0] &&
-    streamResolution[1] &&
-    streamResolution[0] > 0 &&
-    streamResolution[1] > 0
+  const localMetadata = await getVideoMetadata(outputPath).catch(
+    () => undefined,
+  );
+  const resolution = localMetadata
+    ? {
+        width: localMetadata.width,
+        height: localMetadata.height,
+      }
+    : streamResolution &&
+        streamResolution[0] &&
+        streamResolution[1] &&
+        streamResolution[0] > 0 &&
+        streamResolution[1] > 0
       ? {
           width: streamResolution[0],
           height: streamResolution[1],
@@ -508,15 +517,12 @@ export class PinterestPlatformHandler implements PlatformHandler {
     });
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
     const target = await this.resolveTarget(url, options?.signal);
-    const { exitCode, stdout, stderr } = await this.deps.runCommand([
-      PINTEREST_DL_BINARY,
-      "scrape",
-      target,
-      "--video",
-      "--json",
-    ], {
-      signal: options?.signal,
-    });
+    const { exitCode, stdout, stderr } = await this.deps.runCommand(
+      [PINTEREST_DL_BINARY, "scrape", target, "--video", "--json"],
+      {
+        signal: options?.signal,
+      },
+    );
 
     if (exitCode !== 0) {
       logger.error(
@@ -557,7 +563,9 @@ export class PinterestPlatformHandler implements PlatformHandler {
           if (progress.stage === "download") {
             const aggregatePercent =
               typeof progress.percent === "number"
-                ? ((index + progress.percent / 100) / Math.max(limitedItems.length, 1)) * 100
+                ? ((index + progress.percent / 100) /
+                    Math.max(limitedItems.length, 1)) *
+                  100
                 : undefined;
 
             await options.onProgress({

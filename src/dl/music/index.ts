@@ -1,8 +1,8 @@
-import { DownloadError, toDownloadError } from "src/errors/download-error";
-import { MUSIC_PROVIDER_REGISTRY } from "./providers";
-import type { MusicSearchOptions, MusicSearchResult } from "./provider";
-import type { MusicSearchProviderId } from "./types";
 import type { DownloadExecutionResult, DownloadOptions } from "src/dl/types";
+import { DownloadError, toDownloadError } from "src/errors/download-error";
+import type { MusicSearchOptions, MusicSearchResult } from "./provider";
+import { MUSIC_PROVIDER_REGISTRY } from "./providers";
+import type { MusicSearchProviderId } from "./types";
 
 function getProvider(providerId: MusicSearchProviderId) {
   const provider = MUSIC_PROVIDER_REGISTRY[providerId];

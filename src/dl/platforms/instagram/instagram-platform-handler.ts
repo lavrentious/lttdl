@@ -5,10 +5,10 @@ import {
   DownloadError,
   OperationCancelledError,
 } from "src/errors/download-error";
-import { getImageResolution } from "src/utils/image";
-import { config } from "src/utils/env-validation";
-import { logger } from "src/utils/logger";
 import { throwIfAborted } from "src/utils/async";
+import { config } from "src/utils/env-validation";
+import { getImageResolution } from "src/utils/image";
+import { logger } from "src/utils/logger";
 import { getVideoMetadata } from "src/utils/video";
 import type { PlatformHandler } from "../../platform-handler";
 import type {
@@ -38,7 +38,9 @@ type InstagramHandlerDeps = {
     onProgress?: (progress: DownloadProgress) => void | Promise<void>,
     signal?: AbortSignal,
   ) => Promise<CommandResult>;
-  getImageResolution: (filePath: string) => Promise<{ width: number; height: number }>;
+  getImageResolution: (
+    filePath: string,
+  ) => Promise<{ width: number; height: number }>;
   getVideoMetadata: (filePath: string) => Promise<{
     width: number;
     height: number;
@@ -192,7 +194,10 @@ export class InstagramPlatformHandler implements PlatformHandler {
 
     const shortcode = extractInstagramShortcode(url);
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
-    const workdir = path.join(tempDir, `instagram-${shortcode}-${randomUUIDv7()}`);
+    const workdir = path.join(
+      tempDir,
+      `instagram-${shortcode}-${randomUUIDv7()}`,
+    );
     mkdirSync(workdir, { recursive: true });
     const cleanup = () => {
       rmSync(workdir, { recursive: true, force: true });

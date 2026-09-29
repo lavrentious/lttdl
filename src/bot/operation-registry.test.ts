@@ -23,13 +23,17 @@ describe("operation registry", () => {
   test("rejects cancellation from another user", () => {
     const operation = createTrackedOperation(42);
 
-    expect(cancelTrackedOperation(operation.id, 7)).toEqual({ status: "forbidden" });
+    expect(cancelTrackedOperation(operation.id, 7)).toEqual({
+      status: "forbidden",
+    });
   });
 
   test("treats completed operations as finished", () => {
     const operation = createTrackedOperation(42);
     completeTrackedOperation(operation.id);
 
-    expect(cancelTrackedOperation(operation.id, 42)).toEqual({ status: "not_found" });
+    expect(cancelTrackedOperation(operation.id, 42)).toEqual({
+      status: "not_found",
+    });
   });
 });

@@ -51,9 +51,7 @@ export function isCancelledError(error: unknown): boolean {
       ? maybeError.message.toLowerCase()
       : "";
   const name =
-    typeof maybeError.name === "string"
-      ? maybeError.name.toLowerCase()
-      : "";
+    typeof maybeError.name === "string" ? maybeError.name.toLowerCase() : "";
 
   return (
     name === "aborterror" ||

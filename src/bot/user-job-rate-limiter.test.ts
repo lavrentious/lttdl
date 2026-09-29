@@ -78,21 +78,27 @@ describe("user job rate limiter", () => {
       recordUserJobStart(1, now + i);
     }
 
-    expect(recordUserJobStart(1, now + getUserJobMinuteWindowMs() + 1)).toEqual({
-      allowed: true,
-    });
+    expect(recordUserJobStart(1, now + getUserJobMinuteWindowMs() + 1)).toEqual(
+      {
+        allowed: true,
+      },
+    );
   });
 
   test("enforces the daily limit independently of the minute limit", () => {
     const now = 3_000_000;
 
     for (let i = 0; i < 50; i += 1) {
-      expect(recordUserJobStart(1, now + i * getUserJobMinuteWindowMs())).toEqual({
+      expect(
+        recordUserJobStart(1, now + i * getUserJobMinuteWindowMs()),
+      ).toEqual({
         allowed: true,
       });
     }
 
-    expect(checkUserJobRateLimit(1, now + 50 * getUserJobMinuteWindowMs())).toEqual({
+    expect(
+      checkUserJobRateLimit(1, now + 50 * getUserJobMinuteWindowMs()),
+    ).toEqual({
       allowed: false,
       window: "day",
       retryAfterMs: getUserJobDayWindowMs() - 50 * getUserJobMinuteWindowMs(),
@@ -107,7 +113,10 @@ describe("user job rate limiter", () => {
     }
 
     expect(
-      recordUserJobStart(1, now + getUserJobDayWindowMs() + getUserJobMinuteWindowMs()),
+      recordUserJobStart(
+        1,
+        now + getUserJobDayWindowMs() + getUserJobMinuteWindowMs(),
+      ),
     ).toEqual({
       allowed: true,
     });
@@ -130,7 +139,9 @@ describe("user job rate limiter", () => {
         window: "minute",
         retryAfterMs: 12_300,
       }),
-    ).toBe("rate limit exceeded: max 10 heavy jobs per minute. try again in 13s.");
+    ).toBe(
+      "rate limit exceeded: max 10 heavy jobs per minute. try again in 13s.",
+    );
 
     expect(
       formatUserJobRateLimitMessage({
@@ -138,6 +149,8 @@ describe("user job rate limiter", () => {
         window: "day",
         retryAfterMs: 3_900_000,
       }),
-    ).toBe("rate limit exceeded: max 50 heavy jobs per day. try again in 1h 5m.");
+    ).toBe(
+      "rate limit exceeded: max 50 heavy jobs per day. try again in 1h 5m.",
+    );
   });
 });

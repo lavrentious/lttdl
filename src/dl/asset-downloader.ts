@@ -1,7 +1,7 @@
 import { randomUUIDv7 } from "bun";
 import { createWriteStream, existsSync, mkdirSync, rmSync } from "fs";
-import { OperationCancelledError } from "src/errors/download-error";
 import path from "path";
+import { OperationCancelledError } from "src/errors/download-error";
 import { retryAsync, throwIfAborted } from "src/utils/async";
 import { config } from "src/utils/env-validation";
 import type { DownloadProgress } from "./types";
@@ -93,7 +93,10 @@ export function isRetryableNetworkError(error: unknown): boolean {
 }
 
 export class AssetDownloader {
-  async getRemoteContentLength(url: string, signal?: AbortSignal): Promise<number> {
+  async getRemoteContentLength(
+    url: string,
+    signal?: AbortSignal,
+  ): Promise<number> {
     const fetchInfoTimeoutMs = config.get("NETWORK_FETCH_INFO_TIMEOUT_MS");
     const fetchInfoRetries = config.get("NETWORK_FETCH_INFO_RETRIES");
     const retryDelayMs = config.get("NETWORK_RETRY_DELAY_MS");
@@ -151,7 +154,9 @@ export class AssetDownloader {
           }
           timeoutId = setTimeout(() => {
             controller.abort(
-              new Error(`download timed out during ${phase} after ${fileDownloadTimeoutMs}ms`),
+              new Error(
+                `download timed out during ${phase} after ${fileDownloadTimeoutMs}ms`,
+              ),
             );
           }, fileDownloadTimeoutMs);
         };
@@ -215,7 +220,9 @@ export class AssetDownloader {
               await onProgress?.({
                 stage: "download",
                 percent:
-                  totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : undefined,
+                  totalBytes > 0
+                    ? (downloadedBytes / totalBytes) * 100
+                    : undefined,
                 bytesDownloaded: downloadedBytes,
                 totalBytes: totalBytes > 0 ? totalBytes : undefined,
                 speed: formatBytesPerSecond(bytesPerSecond),
@@ -238,7 +245,10 @@ export class AssetDownloader {
           });
         }
 
-        const totalElapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
+        const totalElapsedSeconds = Math.max(
+          (Date.now() - startedAt) / 1000,
+          0.001,
+        );
         const averageBytesPerSecond = downloadedBytes / totalElapsedSeconds;
         await onProgress?.({
           stage: "download",

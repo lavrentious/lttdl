@@ -1,14 +1,24 @@
 import { randomUUIDv7 } from "bun";
 import path from "path";
-import { DownloadError } from "src/errors/download-error";
 import {
   buildOversizeMessage,
   estimateVideoSizeFromDuration,
   isLikelyOversizeVideo,
 } from "src/dl/size-guard";
+import { DownloadError } from "src/errors/download-error";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
-import { getAudioDuration, getVideoMetadata, getVideoResolution } from "src/utils/video";
+import {
+  getAudioDuration,
+  getVideoMetadata,
+  getVideoResolution,
+} from "src/utils/video";
+import type { PlatformHandler, ResolveContext } from "../../platform-handler";
+import type {
+  DownloadExecutionResult,
+  DownloadOptions,
+  YoutubePreset,
+} from "../../types";
 import { DEFAULT_YOUTUBE_PRESET } from "./types";
 import {
   buildYtDlpArgs,
@@ -18,16 +28,8 @@ import {
   resolveYtDlpFinalPath,
   runYtDlpCommand,
   YT_DLP_BINARY,
-  type YtDlpCommandHooks,
-  type YtDlpCommandResult,
   type YtDlpRunCommand,
 } from "./yt-dlp";
-import type { PlatformHandler, ResolveContext } from "../../platform-handler";
-import type {
-  DownloadExecutionResult,
-  DownloadOptions,
-  YoutubePreset,
-} from "../../types";
 
 type YoutubeMetadata = {
   title?: string;
@@ -68,7 +70,9 @@ type DownloadPlan = {
 type YoutubeHandlerDeps = {
   which: (binary: string) => string | null;
   runCommand: YtDlpRunCommand;
-  getVideoResolution: (filePath: string) => Promise<{ width: number; height: number }>;
+  getVideoResolution: (
+    filePath: string,
+  ) => Promise<{ width: number; height: number }>;
 };
 
 function getPresetArgs(preset: YoutubePreset): string[] {
@@ -134,11 +138,7 @@ async function fetchMetadata(
   signal?: AbortSignal,
 ): Promise<YoutubeMetadata> {
   const { exitCode, stdout, stderr } = await runCommandImpl(
-    buildYtDlpArgs([
-      "--no-playlist",
-      "--dump-single-json",
-      url,
-    ]),
+    buildYtDlpArgs(["--no-playlist", "--dump-single-json", url]),
     {
       timeoutMs: config.get("YT_DLP_YOUTUBE_METADATA_TIMEOUT_MS"),
       timeoutLabel: "yt-dlp youtube metadata fetch",
@@ -221,8 +221,7 @@ function buildAutomaticVideoCandidates(
         postprocessArgs: ["--merge-output-format", "mp4"],
         estimatedSizeBytes,
         description: `auto video+audio progressive format ${format.format_id}`,
-        verboseDetails:
-          `auto video+audio: ${format.height || "?"}p ${format.ext || "?"} progressive (${format.format_id})`,
+        verboseDetails: `auto video+audio: ${format.height || "?"}p ${format.ext || "?"} progressive (${format.format_id})`,
         score:
           (format.height || 0) * 1_000_000 +
           (format.width || 0) * 1_000 +
@@ -243,8 +242,10 @@ function buildAutomaticVideoCandidates(
   const mergedCandidates = videoOnlyFormats.flatMap((videoFormat) => {
     const bestAudio = [...audioFormats]
       .sort((a, b) => {
-        const aScore = (a.abr || 0) + (a.tbr || 0) + formatCompatibilityScore(a);
-        const bScore = (b.abr || 0) + (b.tbr || 0) + formatCompatibilityScore(b);
+        const aScore =
+          (a.abr || 0) + (a.tbr || 0) + formatCompatibilityScore(a);
+        const bScore =
+          (b.abr || 0) + (b.tbr || 0) + formatCompatibilityScore(b);
         return bScore - aScore;
       })
       .find((audioFormat) => {
@@ -254,9 +255,11 @@ function buildAutomaticVideoCandidates(
           videoSize !== undefined && audioSize !== undefined
             ? videoSize + audioSize
             : undefined;
-        return maxFileSize === undefined ||
+        return (
+          maxFileSize === undefined ||
           estimatedSizeBytes === undefined ||
-          estimatedSizeBytes <= maxFileSize;
+          estimatedSizeBytes <= maxFileSize
+        );
       });
 
     if (!bestAudio) {
@@ -348,9 +351,11 @@ function chooseAutoAudioOnlyPlan(
       postprocessArgs: ["-x", "--audio-format", "mp3"],
       estimatedSizeBytes: estimateFormatSizeBytes(format, duration),
       description: `auto audio only format ${format.format_id}`,
-      verboseDetails:
-        `auto audio only: ${format.abr || format.tbr || "?"}kbps (${format.format_id})`,
-      score: (format.abr || 0) * 1_000 + (format.tbr || 0) + formatCompatibilityScore(format),
+      verboseDetails: `auto audio only: ${format.abr || format.tbr || "?"}kbps (${format.format_id})`,
+      score:
+        (format.abr || 0) * 1_000 +
+        (format.tbr || 0) +
+        formatCompatibilityScore(format),
     }))
     .filter(
       (candidate) =>
@@ -450,7 +455,11 @@ export class YoutubePlatformHandler implements PlatformHandler {
       const metadata = requiresMetadataPrefetch(preset)
         ? await fetchMetadata(this.deps.runCommand, url, options?.signal)
         : undefined;
-      const plan = buildDownloadPlan(preset, metadata || {}, options?.maxFileSize);
+      const plan = buildDownloadPlan(
+        preset,
+        metadata || {},
+        options?.maxFileSize,
+      );
       const estimatedSize = plan.estimatedSizeBytes;
       if (
         options?.maxFileSize !== undefined &&
@@ -476,15 +485,15 @@ export class YoutubePlatformHandler implements PlatformHandler {
           ? "youtube best preset using mp4-first fast path with merge/remux only"
           : preset === "auto-video-audio"
             ? `youtube auto-video-audio preset selected ${plan.description}`
-          : preset === "auto-audio-only"
-            ? `youtube auto-audio-only preset selected ${plan.description}`
-          : preset === "fast-1080"
-            ? "youtube fast-1080 preset using capped 1080p mp4-first selection"
-            : preset === "fast-720"
-              ? "youtube fast-720 preset using capped 720p mp4-first selection"
-              : preset === "best-audio"
-                ? "youtube best-audio preset using audio extraction to mp3"
-                : "youtube mid-audio preset using reduced bitrate mp3 extraction",
+            : preset === "auto-audio-only"
+              ? `youtube auto-audio-only preset selected ${plan.description}`
+              : preset === "fast-1080"
+                ? "youtube fast-1080 preset using capped 1080p mp4-first selection"
+                : preset === "fast-720"
+                  ? "youtube fast-720 preset using capped 720p mp4-first selection"
+                  : preset === "best-audio"
+                    ? "youtube best-audio preset using audio extraction to mp3"
+                    : "youtube mid-audio preset using reduced bitrate mp3 extraction",
       );
       logger.debug(
         `youtube preset=${preset}, tempDir=${tempDir}, outputTemplate=${outputTemplate}`,
@@ -576,7 +585,9 @@ export class YoutubePlatformHandler implements PlatformHandler {
         typeof runtimeMetadata.height === "number"
           ? { width: runtimeMetadata.width, height: runtimeMetadata.height }
           : await this.deps.getVideoResolution(finalPath);
-      const localVideoMetadata = await getVideoMetadata(finalPath).catch(() => undefined);
+      const localVideoMetadata = await getVideoMetadata(finalPath).catch(
+        () => undefined,
+      );
       logger.debug(
         `youtube video ready at ${finalPath} with resolution ${resolution.width}x${resolution.height}`,
       );

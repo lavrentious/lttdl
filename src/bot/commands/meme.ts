@@ -1,6 +1,11 @@
 import { randomUUIDv7 } from "bun";
 import { mkdirSync, rmSync } from "fs";
-import { InputFile, type Context, type Filter, type MiddlewareFn } from "grammy";
+import {
+  InputFile,
+  type Context,
+  type Filter,
+  type MiddlewareFn,
+} from "grammy";
 import path from "path";
 import { withTimeout } from "src/utils/async";
 import { config } from "src/utils/env-validation";
@@ -29,7 +34,9 @@ function parseMemeCaption(
   return { topText, bottomText };
 }
 
-export const memeCommand: MiddlewareFn<Filter<Context, "message:photo">> = async (ctx, next) => {
+export const memeCommand: MiddlewareFn<
+  Filter<Context, "message:photo">
+> = async (ctx, next) => {
   const parsed = parseMemeCaption(ctx.message.caption);
   if (!parsed) {
     await next();
@@ -52,7 +59,12 @@ export const memeCommand: MiddlewareFn<Filter<Context, "message:photo">> = async
     await Bun.write(downloadedPath, res);
 
     await withTimeout(
-      applyMemeText(downloadedPath, outputPath, parsed.topText, parsed.bottomText),
+      applyMemeText(
+        downloadedPath,
+        outputPath,
+        parsed.topText,
+        parsed.bottomText,
+      ),
       config.get("IMAGE_PROCESS_TIMEOUT_MS"),
       "meme generation",
     );

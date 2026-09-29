@@ -24,7 +24,7 @@ import {
   type MusicVariant,
   type VideoVariant,
 } from "src/dl/downloader";
-import type { DownloadProgress } from "src/dl/types";
+import type { DownloadProgress, YoutubePreset } from "src/dl/types";
 import {
   getUserFacingDownloadErrorMessage,
   isCancelledError,
@@ -47,7 +47,6 @@ import {
   sendChunkedLinks,
 } from "./download-presentation";
 import { musicSearchFromMessage, shouldFallbackToMusicSearch } from "./music";
-import type { YoutubePreset } from "src/dl/types";
 
 const MAX_MEDIA_GROUP_SIZE = 10;
 
@@ -100,7 +99,7 @@ async function sendGalleryShareUrls(
     ttlS >= 3600
       ? `${Math.round(ttlS / 3600)}h`
       : `${Math.round(ttlS / 60)}min`;
-    
+
   const lines = results.map(
     ({ label, url }) => `${label}. <a href="${url}">${url}</a>`,
   );
@@ -435,7 +434,9 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       query,
       {
         tiktokProviders: userSettings.platformPreferences.tiktok.providers,
-        youtubePreset: youtubePresetOverride ?? userSettings.platformPreferences.youtube.preset,
+        youtubePreset:
+          youtubePresetOverride ??
+          userSettings.platformPreferences.youtube.preset,
       },
       {
         strategy: downloadStrategy,
@@ -468,14 +469,21 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         links,
         verboseOutput: userSettings.verboseOutput,
         cleanup,
-        onBeforeCleanup: userSettings.fileShareMode === "never" ? undefined : async (paths, uploadFailed) => {
-          if (userSettings.fileShareMode === "as-fallback" && !uploadFailed) return;
-          const userId = ctx.from?.id ?? null;
-          for (const p of paths) {
-            const url = await shareFile(p, userId);
-            if (url) videoShareUrls.push(url);
-          }
-        },
+        onBeforeCleanup:
+          userSettings.fileShareMode === "never"
+            ? undefined
+            : async (paths, uploadFailed) => {
+                if (
+                  userSettings.fileShareMode === "as-fallback" &&
+                  !uploadFailed
+                )
+                  return;
+                const userId = ctx.from?.id ?? null;
+                for (const p of paths) {
+                  const url = await shareFile(p, userId);
+                  if (url) videoShareUrls.push(url);
+                }
+              },
         sendMedia: (variant) =>
           ctx.replyWithVideo(new InputFile(variant.path), {
             width: variant.payload.resolution.width,
@@ -535,7 +543,10 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             const url = await shareFile(path, userId);
             if (url) imageShareResults.push({ label, url });
           }
-          imageZipUrl = await createAndShareZip(imageShareFiles.map((f) => f.path), userId);
+          imageZipUrl = await createAndShareZip(
+            imageShareFiles.map((f) => f.path),
+            userId,
+          );
         }
         cleanup();
         deleteMessageSafe(ctx, msg1);
@@ -576,14 +587,21 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         links,
         verboseOutput: userSettings.verboseOutput,
         cleanup,
-        onBeforeCleanup: userSettings.fileShareMode === "never" ? undefined : async (paths, uploadFailed) => {
-          if (userSettings.fileShareMode === "as-fallback" && !uploadFailed) return;
-          const userId = ctx.from?.id ?? null;
-          for (const p of paths) {
-            const url = await shareFile(p, userId);
-            if (url) musicShareUrls.push(url);
-          }
-        },
+        onBeforeCleanup:
+          userSettings.fileShareMode === "never"
+            ? undefined
+            : async (paths, uploadFailed) => {
+                if (
+                  userSettings.fileShareMode === "as-fallback" &&
+                  !uploadFailed
+                )
+                  return;
+                const userId = ctx.from?.id ?? null;
+                for (const p of paths) {
+                  const url = await shareFile(p, userId);
+                  if (url) musicShareUrls.push(url);
+                }
+              },
         sendMedia: (variant) =>
           ctx.replyWithAudio(
             new InputFile(
@@ -636,7 +654,10 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             const url = await shareFile(path, userId);
             if (url) galleryShareResults.push({ label, url });
           }
-          galleryZipUrl = await createAndShareZip(galleryShareFiles.map((f) => f.path), userId);
+          galleryZipUrl = await createAndShareZip(
+            galleryShareFiles.map((f) => f.path),
+            userId,
+          );
         }
         cleanup();
         deleteMessageSafe(ctx, msg1);
@@ -669,7 +690,10 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             const url = await shareFile(path, userId);
             if (url) galleryShareResults.push({ label, url });
           }
-          galleryZipUrl = await createAndShareZip(galleryShareFiles.map((f) => f.path), userId);
+          galleryZipUrl = await createAndShareZip(
+            galleryShareFiles.map((f) => f.path),
+            userId,
+          );
         }
         cleanup();
         deleteMessageSafe(ctx, msg1);

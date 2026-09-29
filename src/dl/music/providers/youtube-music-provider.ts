@@ -2,15 +2,6 @@ import { randomUUIDv7 } from "bun";
 import { existsSync } from "fs";
 import path from "path";
 import {
-  DownloadError,
-  isCancelledError,
-  OperationCancelledError,
-} from "src/errors/download-error";
-import { formatSizeMegabytes } from "src/dl/size-guard";
-import { config } from "src/utils/env-validation";
-import { createCenteredSquareJpeg } from "src/utils/image";
-import { getAudioDuration, moveFile, writeMp3Metadata } from "src/utils/video";
-import {
   buildYtDlpArgs,
   cleanupYtDlpArtifacts,
   emitProgressFromYtDlpLine,
@@ -20,10 +11,16 @@ import {
   YT_DLP_BINARY,
   type YtDlpRunCommand,
 } from "src/dl/platforms/youtube/yt-dlp";
-import type {
-  DownloadExecutionResult,
-  DownloadOptions,
-} from "src/dl/types";
+import { formatSizeMegabytes } from "src/dl/size-guard";
+import type { DownloadExecutionResult, DownloadOptions } from "src/dl/types";
+import {
+  DownloadError,
+  isCancelledError,
+  OperationCancelledError,
+} from "src/errors/download-error";
+import { config } from "src/utils/env-validation";
+import { createCenteredSquareJpeg } from "src/utils/image";
+import { getAudioDuration, moveFile, writeMp3Metadata } from "src/utils/video";
 import type {
   MusicProvider,
   MusicSearchOptions,
@@ -99,7 +96,9 @@ type YoutubeMusicProviderConfig = {
   searchMode: "music" | "youtube";
 };
 
-const MP3_TARGET_BITRATES_KBPS = [320, 256, 224, 192, 160, 128, 112, 96, 80, 64, 48, 32];
+const MP3_TARGET_BITRATES_KBPS = [
+  320, 256, 224, 192, 160, 128, 112, 96, 80, 64, 48, 32,
+];
 const MP3_V0_ESTIMATED_BITRATE_KBPS = 280;
 const MP3_CONTAINER_OVERHEAD_BYTES = 512 * 1024;
 
@@ -171,7 +170,10 @@ function formatCompatibilityScore(format: DownloadFormat): number {
   let score = 0;
   if (format.acodec?.includes("opus")) {
     score += 20_000;
-  } else if (format.acodec?.includes("mp4a") || format.acodec?.includes("aac")) {
+  } else if (
+    format.acodec?.includes("mp4a") ||
+    format.acodec?.includes("aac")
+  ) {
     score += 15_000;
   } else if (format.acodec?.includes("mp3")) {
     score += 12_000;
@@ -185,10 +187,12 @@ function formatCompatibilityScore(format: DownloadFormat): number {
   return score;
 }
 
-function buildAudioOversizeMessage(options: {
-  estimatedSizeBytes?: number;
-  exact?: boolean;
-} = {}): string {
+function buildAudioOversizeMessage(
+  options: {
+    estimatedSizeBytes?: number;
+    exact?: boolean;
+  } = {},
+): string {
   if (
     typeof options.estimatedSizeBytes === "number" &&
     Number.isFinite(options.estimatedSizeBytes)
@@ -198,11 +202,18 @@ function buildAudioOversizeMessage(options: {
       : `audio is likely too large to upload (about ${formatSizeMegabytes(options.estimatedSizeBytes)})`;
   }
 
-  return options.exact ? "audio is too large to upload" : "audio is likely too large to upload";
+  return options.exact
+    ? "audio is too large to upload"
+    : "audio is likely too large to upload";
 }
 
-function estimateMp3SizeBytes(durationSeconds: number, bitrateKbps: number): number {
-  return durationSeconds * bitrateKbps * 1000 / 8 + MP3_CONTAINER_OVERHEAD_BYTES;
+function estimateMp3SizeBytes(
+  durationSeconds: number,
+  bitrateKbps: number,
+): number {
+  return (
+    (durationSeconds * bitrateKbps * 1000) / 8 + MP3_CONTAINER_OVERHEAD_BYTES
+  );
 }
 
 function chooseMp3AudioQuality(
@@ -213,7 +224,10 @@ function chooseMp3AudioQuality(
     return { value: "0", exact: false };
   }
 
-  const v0Estimate = estimateMp3SizeBytes(durationSeconds, MP3_V0_ESTIMATED_BITRATE_KBPS);
+  const v0Estimate = estimateMp3SizeBytes(
+    durationSeconds,
+    MP3_V0_ESTIMATED_BITRATE_KBPS,
+  );
   if (v0Estimate <= maxFileSize) {
     return {
       value: "0",
@@ -223,12 +237,16 @@ function chooseMp3AudioQuality(
   }
 
   const bitrate = MP3_TARGET_BITRATES_KBPS.find(
-    (candidate) => estimateMp3SizeBytes(durationSeconds, candidate) <= maxFileSize,
+    (candidate) =>
+      estimateMp3SizeBytes(durationSeconds, candidate) <= maxFileSize,
   );
   if (!bitrate) {
     throw new DownloadError(
       buildAudioOversizeMessage({
-        estimatedSizeBytes: estimateMp3SizeBytes(durationSeconds, MP3_TARGET_BITRATES_KBPS.at(-1)!),
+        estimatedSizeBytes: estimateMp3SizeBytes(
+          durationSeconds,
+          MP3_TARGET_BITRATES_KBPS.at(-1)!,
+        ),
         exact: true,
       }),
     );
@@ -255,7 +273,8 @@ function chooseAudioDownloadFormat(
       estimatedSizeBytes: estimateFormatSizeBytes(format, duration),
       effectiveAudioBitrateKbps: getEffectiveAudioBitrateKbps(format),
       audioQualityScore:
-        getEffectiveAudioBitrateKbps(format) * getAudioCodecQualityMultiplier(format),
+        getEffectiveAudioBitrateKbps(format) *
+        getAudioCodecQualityMultiplier(format),
       totalBitrateKbps: getFormatBitrateKbps(format),
       score:
         getEffectiveAudioBitrateKbps(format) *
@@ -279,8 +298,10 @@ function chooseAudioDownloadFormat(
         return Number(a.hasVideo) - Number(b.hasVideo);
       }
 
-      return (a.estimatedSizeBytes || Number.MAX_SAFE_INTEGER) -
-        (b.estimatedSizeBytes || Number.MAX_SAFE_INTEGER);
+      return (
+        (a.estimatedSizeBytes || Number.MAX_SAFE_INTEGER) -
+        (b.estimatedSizeBytes || Number.MAX_SAFE_INTEGER)
+      );
     });
 
   const bestCandidate = audioCandidates[0];
@@ -322,11 +343,7 @@ async function fetchMetadata(
   signal?: AbortSignal,
 ): Promise<DownloadMetadata> {
   const { exitCode, stdout, stderr } = await runCommandImpl(
-    buildYtDlpArgs([
-      "--no-playlist",
-      "--dump-single-json",
-      url,
-    ]),
+    buildYtDlpArgs(["--no-playlist", "--dump-single-json", url]),
     {
       timeoutMs: config.get("YT_DLP_MUSIC_METADATA_TIMEOUT_MS"),
       timeoutLabel: "yt-dlp music metadata fetch",
@@ -350,7 +367,10 @@ function parseDurationString(value?: string): number | undefined {
     .trim()
     .split(":")
     .map((part) => Number(part));
-  if (!parts.length || parts.some((part) => !Number.isFinite(part) || part < 0)) {
+  if (
+    !parts.length ||
+    parts.some((part) => !Number.isFinite(part) || part < 0)
+  ) {
     return undefined;
   }
 
@@ -374,7 +394,9 @@ function toWatchUrl(entry: SearchMetadataEntry): string | null {
 }
 
 function resolveArtistName(
-  metadata: Partial<Pick<SearchMetadataEntry, "artists" | "uploader" | "channel" | "creator">> &
+  metadata: Partial<
+    Pick<SearchMetadataEntry, "artists" | "uploader" | "channel" | "creator">
+  > &
     Partial<
       Pick<
         DownloadMetadata,
@@ -391,16 +413,25 @@ function resolveArtistName(
     metadata.creator,
   ];
 
-  return candidates.find((value) => typeof value === "string" && value.trim())?.trim();
+  return candidates
+    .find((value) => typeof value === "string" && value.trim())
+    ?.trim();
 }
 
 function resolveAlbumName(metadata: DownloadMetadata): string | undefined {
-  const candidates = [metadata.album, metadata.playlist_title, metadata.channel];
-  return candidates.find((value) => typeof value === "string" && value.trim())?.trim();
+  const candidates = [
+    metadata.album,
+    metadata.playlist_title,
+    metadata.channel,
+  ];
+  return candidates
+    .find((value) => typeof value === "string" && value.trim())
+    ?.trim();
 }
 
 function ensureMp3Filename(name: string | undefined): string {
-  const base = (name?.trim() || "audio").replace(/[\\/:*?\"<>|]/g, "_").trim() || "audio";
+  const base =
+    (name?.trim() || "audio").replace(/[\\/:*?\"<>|]/g, "_").trim() || "audio";
   return base.toLowerCase().endsWith(".mp3") ? base : `${base}.mp3`;
 }
 
@@ -564,8 +595,14 @@ export class YoutubeMusicProvider implements MusicProvider {
         }
         return {} as DownloadMetadata;
       });
-      const audioPlan = chooseAudioDownloadFormat(prefetchMetadata, options?.maxFileSize);
-      const mp3Quality = chooseMp3AudioQuality(prefetchMetadata.duration, options?.maxFileSize);
+      const audioPlan = chooseAudioDownloadFormat(
+        prefetchMetadata,
+        options?.maxFileSize,
+      );
+      const mp3Quality = chooseMp3AudioQuality(
+        prefetchMetadata.duration,
+        options?.maxFileSize,
+      );
       const { exitCode, stdout, stderr } = await this.deps.runCommand(
         buildYtDlpArgs([
           ...audioPlan.formatArgs,

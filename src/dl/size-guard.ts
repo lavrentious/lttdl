@@ -26,7 +26,10 @@ export function buildOversizeMessage({
   estimatedSizeBytes?: number;
   exact?: boolean;
 } = {}): string {
-  if (typeof estimatedSizeBytes === "number" && Number.isFinite(estimatedSizeBytes)) {
+  if (
+    typeof estimatedSizeBytes === "number" &&
+    Number.isFinite(estimatedSizeBytes)
+  ) {
     return exact
       ? `video is too large to upload (${formatSizeMegabytes(estimatedSizeBytes)})`
       : `video is likely too large to upload (about ${formatSizeMegabytes(estimatedSizeBytes)})`;

@@ -20,20 +20,22 @@ function createTempDir(): string {
 describe("extractInstagramShortcode", () => {
   test("extracts shortcode from post links", () => {
     expect(
-      extractInstagramShortcode("https://instagram.com/p/abcdef?utm_source=ig_web_copy_link"),
+      extractInstagramShortcode(
+        "https://instagram.com/p/abcdef?utm_source=ig_web_copy_link",
+      ),
     ).toBe("abcdef");
   });
 
   test("extracts shortcode from reel links", () => {
-    expect(extractInstagramShortcode("https://www.instagram.com/reel/abc_DEF-1/")).toBe(
-      "abc_DEF-1",
-    );
+    expect(
+      extractInstagramShortcode("https://www.instagram.com/reel/abc_DEF-1/"),
+    ).toBe("abc_DEF-1");
   });
 
   test("rejects unsupported instagram links", () => {
-    expect(() => extractInstagramShortcode("https://www.instagram.com/stories/user/123")).toThrow(
-      new DownloadError("unsupported instagram link"),
-    );
+    expect(() =>
+      extractInstagramShortcode("https://www.instagram.com/stories/user/123"),
+    ).toThrow(new DownloadError("unsupported instagram link"));
   });
 });
 
@@ -46,9 +48,9 @@ describe("InstagramPlatformHandler", () => {
       getVideoMetadata: async () => ({ width: 1, height: 1 }),
     });
 
-    await expect(handler.download!("https://instagram.com/p/abcdef/")).rejects.toThrow(
-      new DownloadError("instaloader is not installed"),
-    );
+    await expect(
+      handler.download!("https://instagram.com/p/abcdef/"),
+    ).rejects.toThrow(new DownloadError("instaloader is not installed"));
   });
 
   test("downloads a single image post", async () => {

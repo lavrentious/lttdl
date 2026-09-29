@@ -5,6 +5,12 @@ import {
   type Context,
 } from "grammy";
 import {
+  ALL_MUSIC_SEARCH_PROVIDERS,
+  MUSIC_SEARCH_PROVIDER_DESCRIPTIONS,
+  MUSIC_SEARCH_PROVIDER_LABELS,
+  type MusicSearchProviderId,
+} from "src/dl/music/types";
+import {
   ALL_TIKTOK_PROVIDERS,
   type TiktokProvider,
 } from "src/dl/platforms/tiktok/types";
@@ -13,14 +19,7 @@ import {
   YOUTUBE_PRESET_DESCRIPTIONS,
   YOUTUBE_PRESET_LABELS,
 } from "src/dl/platforms/youtube/types";
-import {
-  ALL_MUSIC_SEARCH_PROVIDERS,
-  MUSIC_SEARCH_PROVIDER_DESCRIPTIONS,
-  MUSIC_SEARCH_PROVIDER_LABELS,
-  type MusicSearchProviderId,
-} from "src/dl/music/types";
 import type { YoutubePreset } from "src/dl/types";
-import { config } from "src/utils/env-validation";
 import {
   ALL_FILE_SHARE_MODES,
   FILE_SHARE_MODE_DESCRIPTIONS,
@@ -34,6 +33,7 @@ import {
   updateUserYoutubePreset,
   type FileShareMode,
 } from "src/settings/user-settings";
+import { config } from "src/utils/env-validation";
 
 const SETTINGS_CALLBACK_PREFIX = "settings";
 
@@ -100,7 +100,9 @@ function formatYoutubePresetMessage(userId: number): string {
     `*youtube preset*\n\n` +
     `this preset controls how youtube links are downloaded with \`yt-dlp\`.\n\n` +
     `*current*: ${YOUTUBE_PRESET_LABELS[settings.platformPreferences.youtube.preset]}\n\n` +
-    ALL_YOUTUBE_PRESETS.map((preset) => YOUTUBE_PRESET_DESCRIPTIONS[preset]).join("\n")
+    ALL_YOUTUBE_PRESETS.map(
+      (preset) => YOUTUBE_PRESET_DESCRIPTIONS[preset],
+    ).join("\n")
   );
 }
 
@@ -124,7 +126,9 @@ function formatFileShareModeMessage(userId: number): string {
     `*file sharing*\n\n` +
     `controls when the bot copies downloads to the share server and sends a direct link.\n\n` +
     `*current*: ${FILE_SHARE_MODE_LABELS[settings.fileShareMode]}\n\n` +
-    ALL_FILE_SHARE_MODES.map((mode) => FILE_SHARE_MODE_DESCRIPTIONS[mode]).join("\n")
+    ALL_FILE_SHARE_MODES.map((mode) => FILE_SHARE_MODE_DESCRIPTIONS[mode]).join(
+      "\n",
+    )
   );
 }
 
@@ -238,7 +242,12 @@ function buildMusicProviderKeyboard(userId: number): InlineKeyboard {
 
 async function editSettingsMessage(
   ctx: CallbackQueryContext<Context>,
-  view: "main" | "providers" | "youtube_preset" | "music_provider" | "file_share_mode",
+  view:
+    | "main"
+    | "providers"
+    | "youtube_preset"
+    | "music_provider"
+    | "file_share_mode",
   userId: number,
 ) {
   const text =

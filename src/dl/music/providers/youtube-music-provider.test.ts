@@ -61,39 +61,42 @@ describe("YoutubeMusicProvider", () => {
     let searchArg = "";
     let executedCommand: string[] = [];
     let timeoutMs: number | undefined;
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async () => {},
-      runCommand: async (cmd, hooks) => {
-        executedCommand = cmd;
-        searchArg = cmd.at(-1) || "";
-        timeoutMs = hooks?.timeoutMs;
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({
-            entries: [
-              {
-                id: "track-1",
-                title: "Track 1",
-                artists: ["Artist 1"],
-                duration_string: "3:01",
-              },
-              {
-                id: "track-2",
-                title: "Track 2",
-                artists: ["Artist 2", "Artist 3"],
-                duration: 205,
-                webpage_url: "https://www.youtube.com/watch?v=track-2",
-              },
-            ],
-          }),
-          stderr: "",
-        };
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
       },
-    });
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async () => {},
+        runCommand: async (cmd, hooks) => {
+          executedCommand = cmd;
+          searchArg = cmd.at(-1) || "";
+          timeoutMs = hooks?.timeoutMs;
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              entries: [
+                {
+                  id: "track-1",
+                  title: "Track 1",
+                  artists: ["Artist 1"],
+                  duration_string: "3:01",
+                },
+                {
+                  id: "track-2",
+                  title: "Track 2",
+                  artists: ["Artist 2", "Artist 3"],
+                  duration: 205,
+                  webpage_url: "https://www.youtube.com/watch?v=track-2",
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        },
+      },
+    );
 
     const results = await provider.search("daft punk", 5);
 
@@ -104,7 +107,9 @@ describe("YoutubeMusicProvider", () => {
     expect(executedCommand).toContain("--playlist-items");
     expect(executedCommand).toContain("1:5");
     expect(timeoutMs).toBe(120000);
-    expect(searchArg).toBe("https://music.youtube.com/search?q=daft%20punk#songs");
+    expect(searchArg).toBe(
+      "https://music.youtube.com/search?q=daft%20punk#songs",
+    );
     expect(results).toEqual([
       {
         id: "track-1",
@@ -154,31 +159,36 @@ describe("YoutubeMusicProvider", () => {
     await provider.search("daft punk", 5, { useCookies: true });
 
     expect(executedCommand).toContain("--cookies");
-    expect(executedCommand).toContain(path.join(os.tmpdir(), "lttdl-cookies.txt"));
+    expect(executedCommand).toContain(
+      path.join(os.tmpdir(), "lttdl-cookies.txt"),
+    );
   });
 
   test("falls back to channel name when artist metadata is missing", async () => {
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async () => {},
-      runCommand: async () => ({
-        exitCode: 0,
-        stdout: JSON.stringify({
-          entries: [
-            {
-              id: "track-1",
-              title: "Track 1",
-              channel: "Kid Cudi",
-              duration_string: "4:18",
-            },
-          ],
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
+      },
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async () => {},
+        runCommand: async () => ({
+          exitCode: 0,
+          stdout: JSON.stringify({
+            entries: [
+              {
+                id: "track-1",
+                title: "Track 1",
+                channel: "Kid Cudi",
+                duration_string: "4:18",
+              },
+            ],
+          }),
+          stderr: "",
         }),
-        stderr: "",
-      }),
-    });
+      },
+    );
 
     const results = await provider.search("kid cudi mr rager", 5);
 
@@ -195,30 +205,33 @@ describe("YoutubeMusicProvider", () => {
 
   test("searches regular youtube videos when configured", async () => {
     let searchArg = "";
-    const provider = new YoutubeMusicProvider({
-      id: "youtube",
-      searchMode: "youtube",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async () => {},
-      runCommand: async (cmd) => {
-        searchArg = cmd.at(-1) || "";
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({
-            entries: [
-              {
-                id: "video-1",
-                title: "Video 1",
-                uploader: "Artist 1",
-                duration: 181,
-              },
-            ],
-          }),
-          stderr: "",
-        };
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube",
+        searchMode: "youtube",
       },
-    });
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async () => {},
+        runCommand: async (cmd) => {
+          searchArg = cmd.at(-1) || "";
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              entries: [
+                {
+                  id: "video-1",
+                  title: "Video 1",
+                  uploader: "Artist 1",
+                  duration: 181,
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        },
+      },
+    );
 
     const results = await provider.search("daft punk", 5);
 
@@ -252,53 +265,58 @@ describe("YoutubeMusicProvider", () => {
           };
         }
       | undefined;
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async (inputPath, outputPath, options) => {
-        finalizeArgs = { inputPath, outputPath, options };
-        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
       },
-      runCommand: async (cmd, hooks) => {
-        runCount += 1;
-        executedCommand = cmd;
-        if (cmd.includes("--dump-single-json")) {
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async (inputPath, outputPath, options) => {
+          finalizeArgs = { inputPath, outputPath, options };
+          await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+        },
+        runCommand: async (cmd, hooks) => {
+          runCount += 1;
+          executedCommand = cmd;
+          if (cmd.includes("--dump-single-json")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                title: "Song title",
+                track: "Mr. Rager",
+                artist: "",
+                channel: "Kid Cudi",
+                album: "Man on the Moon II",
+                duration: 222,
+                webpage_url: "https://www.youtube.com/watch?v=song",
+              }),
+              stderr: "",
+            };
+          }
+          await hooks?.onStdoutLine?.(
+            "[download]  50.0% of 10.00MiB at 5.00MiB/s ETA 00:01",
+          );
+          await hooks?.onStdoutLine?.("[ExtractAudio] Destination: song.mp3");
+          downloadTimeoutMs = hooks?.timeoutMs;
+          const outputArgIndex = cmd.indexOf("--output");
+          if (outputArgIndex >= 0) {
+            const outputTemplate = cmd[outputArgIndex + 1]!;
+            const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+            await Bun.write(finalPath, "audio");
+          }
           return {
             exitCode: 0,
             stdout: JSON.stringify({
               title: "Song title",
-              track: "Mr. Rager",
-              artist: "",
-              channel: "Kid Cudi",
-              album: "Man on the Moon II",
               duration: 222,
               webpage_url: "https://www.youtube.com/watch?v=song",
             }),
             stderr: "",
           };
-        }
-        await hooks?.onStdoutLine?.("[download]  50.0% of 10.00MiB at 5.00MiB/s ETA 00:01");
-        await hooks?.onStdoutLine?.("[ExtractAudio] Destination: song.mp3");
-        downloadTimeoutMs = hooks?.timeoutMs;
-        const outputArgIndex = cmd.indexOf("--output");
-        if (outputArgIndex >= 0) {
-          const outputTemplate = cmd[outputArgIndex + 1]!;
-          const finalPath = outputTemplate.replace("%(ext)s", "mp3");
-          await Bun.write(finalPath, "audio");
-        }
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({
-            title: "Song title",
-            duration: 222,
-            webpage_url: "https://www.youtube.com/watch?v=song",
-          }),
-          stderr: "",
-        };
+        },
       },
-    });
+    );
 
     const result = await provider.download(
       {
@@ -315,7 +333,9 @@ describe("YoutubeMusicProvider", () => {
     );
 
     expect(executedCommand).toContain("--cookies");
-    expect(executedCommand).toContain(path.join(os.tmpdir(), "lttdl-cookies.txt"));
+    expect(executedCommand).toContain(
+      path.join(os.tmpdir(), "lttdl-cookies.txt"),
+    );
     expect(executedCommand).toContain("--extract-audio");
     expect(executedCommand).toContain("-f");
     expect(executedCommand).toContain("ba");
@@ -337,7 +357,9 @@ describe("YoutubeMusicProvider", () => {
         expect(result.res.variants[0].payload.name).toBe("Mr. Rager");
         expect(result.res.variants[0].payload.filename).toBe("Mr. Rager.mp3");
         expect(result.res.variants[0].payload.performer).toBe("Kid Cudi");
-        expect(result.res.variants[0].payload.details).toBe("Man on the Moon II");
+        expect(result.res.variants[0].payload.details).toBe(
+          "Man on the Moon II",
+        );
       }
     }
     expect(finalizeArgs).toBeDefined();
@@ -355,34 +377,39 @@ describe("YoutubeMusicProvider", () => {
   test("ignores destination postprocess noise in progress updates", async () => {
     const tempDir = createTempDir();
     const progressMessages: string[] = [];
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async (inputPath, outputPath) => {
-        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
       },
-      runCommand: async (cmd, hooks) => {
-        await hooks?.onStdoutLine?.("[ExtractAudio] Destination: /tmp/song.mp3");
-        await hooks?.onStdoutLine?.("[ExtractAudio] Extracting audio");
-        const outputArgIndex = cmd.indexOf("--output");
-        if (outputArgIndex >= 0) {
-          const outputTemplate = cmd[outputArgIndex + 1]!;
-          const finalPath = outputTemplate.replace("%(ext)s", "mp3");
-          await Bun.write(finalPath, "audio");
-        }
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({
-            title: "Song title",
-            duration: 222,
-            webpage_url: "https://www.youtube.com/watch?v=song",
-          }),
-          stderr: "",
-        };
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async (inputPath, outputPath) => {
+          await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+        },
+        runCommand: async (cmd, hooks) => {
+          await hooks?.onStdoutLine?.(
+            "[ExtractAudio] Destination: /tmp/song.mp3",
+          );
+          await hooks?.onStdoutLine?.("[ExtractAudio] Extracting audio");
+          const outputArgIndex = cmd.indexOf("--output");
+          if (outputArgIndex >= 0) {
+            const outputTemplate = cmd[outputArgIndex + 1]!;
+            const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+            await Bun.write(finalPath, "audio");
+          }
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Song title",
+              duration: 222,
+              webpage_url: "https://www.youtube.com/watch?v=song",
+            }),
+            stderr: "",
+          };
+        },
       },
-    });
+    );
 
     await provider.download(
       {
@@ -407,63 +434,66 @@ describe("YoutubeMusicProvider", () => {
   test("chooses the best audio-only format that fits under max file size", async () => {
     const tempDir = createTempDir();
     let downloadCommand: string[] = [];
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async (inputPath, outputPath) => {
-        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
       },
-      runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async (inputPath, outputPath) => {
+          await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+        },
+        runCommand: async (cmd) => {
+          if (cmd.includes("--dump-single-json")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                title: "Song title",
+                duration: 200,
+                formats: [
+                  {
+                    format_id: "tiny",
+                    acodec: "mp4a.40.2",
+                    vcodec: "none",
+                    abr: 96,
+                    ext: "m4a",
+                  },
+                  {
+                    format_id: "fit",
+                    acodec: "mp4a.40.2",
+                    vcodec: "none",
+                    abr: 192,
+                    ext: "m4a",
+                  },
+                  {
+                    format_id: "too-big",
+                    acodec: "mp4a.40.2",
+                    vcodec: "none",
+                    abr: 3200,
+                    ext: "m4a",
+                  },
+                ],
+              }),
+              stderr: "",
+            };
+          }
+
+          downloadCommand = cmd;
+          const outputArgIndex = cmd.indexOf("--output");
+          if (outputArgIndex >= 0) {
+            const outputTemplate = cmd[outputArgIndex + 1]!;
+            const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+            await Bun.write(finalPath, "audio");
+          }
           return {
             exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Song title",
-              duration: 200,
-              formats: [
-                {
-                  format_id: "tiny",
-                  acodec: "mp4a.40.2",
-                  vcodec: "none",
-                  abr: 96,
-                  ext: "m4a",
-                },
-                {
-                  format_id: "fit",
-                  acodec: "mp4a.40.2",
-                  vcodec: "none",
-                  abr: 192,
-                  ext: "m4a",
-                },
-                {
-                  format_id: "too-big",
-                  acodec: "mp4a.40.2",
-                  vcodec: "none",
-                  abr: 3200,
-                  ext: "m4a",
-                },
-              ],
-            }),
+            stdout: JSON.stringify({}),
             stderr: "",
           };
-        }
-
-        downloadCommand = cmd;
-        const outputArgIndex = cmd.indexOf("--output");
-        if (outputArgIndex >= 0) {
-          const outputTemplate = cmd[outputArgIndex + 1]!;
-          const finalPath = outputTemplate.replace("%(ext)s", "mp3");
-          await Bun.write(finalPath, "audio");
-        }
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({}),
-          stderr: "",
-        };
+        },
       },
-    });
+    );
 
     await provider.download(
       {
@@ -486,56 +516,59 @@ describe("YoutubeMusicProvider", () => {
   test("prefers higher bitrate even when only tbr is reported", async () => {
     const tempDir = createTempDir();
     let downloadCommand: string[] = [];
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async (inputPath, outputPath) => {
-        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
       },
-      runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async (inputPath, outputPath) => {
+          await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+        },
+        runCommand: async (cmd) => {
+          if (cmd.includes("--dump-single-json")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                title: "Song title",
+                duration: 240,
+                formats: [
+                  {
+                    format_id: "m4a-low",
+                    acodec: "mp4a.40.2",
+                    vcodec: "none",
+                    abr: 128,
+                    ext: "m4a",
+                  },
+                  {
+                    format_id: "webm-high",
+                    acodec: "opus",
+                    vcodec: "none",
+                    tbr: 275,
+                    ext: "webm",
+                  },
+                ],
+              }),
+              stderr: "",
+            };
+          }
+
+          downloadCommand = cmd;
+          const outputArgIndex = cmd.indexOf("--output");
+          if (outputArgIndex >= 0) {
+            const outputTemplate = cmd[outputArgIndex + 1]!;
+            const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+            await Bun.write(finalPath, "audio");
+          }
           return {
             exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Song title",
-              duration: 240,
-              formats: [
-                {
-                  format_id: "m4a-low",
-                  acodec: "mp4a.40.2",
-                  vcodec: "none",
-                  abr: 128,
-                  ext: "m4a",
-                },
-                {
-                  format_id: "webm-high",
-                  acodec: "opus",
-                  vcodec: "none",
-                  tbr: 275,
-                  ext: "webm",
-                },
-              ],
-            }),
+            stdout: JSON.stringify({}),
             stderr: "",
           };
-        }
-
-        downloadCommand = cmd;
-        const outputArgIndex = cmd.indexOf("--output");
-        if (outputArgIndex >= 0) {
-          const outputTemplate = cmd[outputArgIndex + 1]!;
-          const finalPath = outputTemplate.replace("%(ext)s", "mp3");
-          await Bun.write(finalPath, "audio");
-        }
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({}),
-          stderr: "",
-        };
+        },
       },
-    });
+    );
 
     await provider.download(
       {
@@ -557,58 +590,61 @@ describe("YoutubeMusicProvider", () => {
   test("prefers opus audio-only over slightly higher bitrate aac for mp3 extraction", async () => {
     const tempDir = createTempDir();
     let downloadCommand: string[] = [];
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async (inputPath, outputPath) => {
-        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
       },
-      runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async (inputPath, outputPath) => {
+          await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+        },
+        runCommand: async (cmd) => {
+          if (cmd.includes("--dump-single-json")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                title: "Song title",
+                duration: 269,
+                formats: [
+                  {
+                    format_id: "140",
+                    acodec: "mp4a.40.2",
+                    vcodec: "none",
+                    abr: 129.57,
+                    tbr: 129.57,
+                    ext: "m4a",
+                  },
+                  {
+                    format_id: "251",
+                    acodec: "opus",
+                    vcodec: "none",
+                    abr: 127.512,
+                    tbr: 127.512,
+                    ext: "webm",
+                  },
+                ],
+              }),
+              stderr: "",
+            };
+          }
+
+          downloadCommand = cmd;
+          const outputArgIndex = cmd.indexOf("--output");
+          if (outputArgIndex >= 0) {
+            const outputTemplate = cmd[outputArgIndex + 1]!;
+            const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+            await Bun.write(finalPath, "audio");
+          }
           return {
             exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Song title",
-              duration: 269,
-              formats: [
-                {
-                  format_id: "140",
-                  acodec: "mp4a.40.2",
-                  vcodec: "none",
-                  abr: 129.57,
-                  tbr: 129.57,
-                  ext: "m4a",
-                },
-                {
-                  format_id: "251",
-                  acodec: "opus",
-                  vcodec: "none",
-                  abr: 127.512,
-                  tbr: 127.512,
-                  ext: "webm",
-                },
-              ],
-            }),
+            stdout: JSON.stringify({}),
             stderr: "",
           };
-        }
-
-        downloadCommand = cmd;
-        const outputArgIndex = cmd.indexOf("--output");
-        if (outputArgIndex >= 0) {
-          const outputTemplate = cmd[outputArgIndex + 1]!;
-          const finalPath = outputTemplate.replace("%(ext)s", "mp3");
-          await Bun.write(finalPath, "audio");
-        }
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({}),
-          stderr: "",
-        };
+        },
       },
-    });
+    );
 
     await provider.download(
       {
@@ -630,58 +666,61 @@ describe("YoutubeMusicProvider", () => {
   test("considers progressive formats when they expose a higher audio bitrate", async () => {
     const tempDir = createTempDir();
     let downloadCommand: string[] = [];
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async (inputPath, outputPath) => {
-        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
       },
-      runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async (inputPath, outputPath) => {
+          await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+        },
+        runCommand: async (cmd) => {
+          if (cmd.includes("--dump-single-json")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                title: "Song title",
+                duration: 180,
+                formats: [
+                  {
+                    format_id: "251",
+                    acodec: "opus",
+                    vcodec: "none",
+                    abr: 128,
+                    tbr: 128,
+                    ext: "webm",
+                  },
+                  {
+                    format_id: "18",
+                    acodec: "aac",
+                    vcodec: "h264",
+                    abr: 192,
+                    tbr: 400,
+                    ext: "mp4",
+                  },
+                ],
+              }),
+              stderr: "",
+            };
+          }
+
+          downloadCommand = cmd;
+          const outputArgIndex = cmd.indexOf("--output");
+          if (outputArgIndex >= 0) {
+            const outputTemplate = cmd[outputArgIndex + 1]!;
+            const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+            await Bun.write(finalPath, "audio");
+          }
           return {
             exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Song title",
-              duration: 180,
-              formats: [
-                {
-                  format_id: "251",
-                  acodec: "opus",
-                  vcodec: "none",
-                  abr: 128,
-                  tbr: 128,
-                  ext: "webm",
-                },
-                {
-                  format_id: "18",
-                  acodec: "aac",
-                  vcodec: "h264",
-                  abr: 192,
-                  tbr: 400,
-                  ext: "mp4",
-                },
-              ],
-            }),
+            stdout: JSON.stringify({}),
             stderr: "",
           };
-        }
-
-        downloadCommand = cmd;
-        const outputArgIndex = cmd.indexOf("--output");
-        if (outputArgIndex >= 0) {
-          const outputTemplate = cmd[outputArgIndex + 1]!;
-          const finalPath = outputTemplate.replace("%(ext)s", "mp3");
-          await Bun.write(finalPath, "audio");
-        }
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({}),
-          stderr: "",
-        };
+        },
       },
-    });
+    );
 
     await provider.download(
       {
@@ -702,40 +741,43 @@ describe("YoutubeMusicProvider", () => {
 
   test("fails early when no audio format can fit under max file size", async () => {
     const tempDir = createTempDir();
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async () => {},
-      runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
+      },
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async () => {},
+        runCommand: async (cmd) => {
+          if (cmd.includes("--dump-single-json")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                title: "Song title",
+                duration: 300,
+                formats: [
+                  {
+                    format_id: "huge",
+                    acodec: "mp4a.40.2",
+                    vcodec: "none",
+                    abr: 5000,
+                    ext: "m4a",
+                  },
+                ],
+              }),
+              stderr: "",
+            };
+          }
+
           return {
             exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Song title",
-              duration: 300,
-              formats: [
-                {
-                  format_id: "huge",
-                  acodec: "mp4a.40.2",
-                  vcodec: "none",
-                  abr: 5000,
-                  ext: "m4a",
-                },
-              ],
-            }),
+            stdout: JSON.stringify({}),
             stderr: "",
           };
-        }
-
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({}),
-          stderr: "",
-        };
+        },
       },
-    });
+    );
 
     await expect(
       provider.download(
@@ -757,51 +799,54 @@ describe("YoutubeMusicProvider", () => {
   test("reduces mp3 bitrate for long tracks to stay within max file size", async () => {
     const tempDir = createTempDir();
     let downloadCommand: string[] = [];
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async (inputPath, outputPath) => {
-        await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
       },
-      runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async (inputPath, outputPath) => {
+          await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+        },
+        runCommand: async (cmd) => {
+          if (cmd.includes("--dump-single-json")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                title: "Long song",
+                duration: 4100,
+                formats: [
+                  {
+                    format_id: "249",
+                    acodec: "opus",
+                    vcodec: "none",
+                    abr: 51,
+                    tbr: 51,
+                    ext: "webm",
+                    filesize: 24 * 1024 * 1024,
+                  },
+                ],
+              }),
+              stderr: "",
+            };
+          }
+
+          downloadCommand = cmd;
+          const outputArgIndex = cmd.indexOf("--output");
+          if (outputArgIndex >= 0) {
+            const outputTemplate = cmd[outputArgIndex + 1]!;
+            const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+            await Bun.write(finalPath, "audio");
+          }
           return {
             exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Long song",
-              duration: 4100,
-              formats: [
-                {
-                  format_id: "249",
-                  acodec: "opus",
-                  vcodec: "none",
-                  abr: 51,
-                  tbr: 51,
-                  ext: "webm",
-                  filesize: 24 * 1024 * 1024,
-                },
-              ],
-            }),
+            stdout: JSON.stringify({}),
             stderr: "",
           };
-        }
-
-        downloadCommand = cmd;
-        const outputArgIndex = cmd.indexOf("--output");
-        if (outputArgIndex >= 0) {
-          const outputTemplate = cmd[outputArgIndex + 1]!;
-          const finalPath = outputTemplate.replace("%(ext)s", "mp3");
-          await Bun.write(finalPath, "audio");
-        }
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({}),
-          stderr: "",
-        };
+        },
       },
-    });
+    );
 
     await provider.download(
       {
@@ -821,14 +866,17 @@ describe("YoutubeMusicProvider", () => {
   });
 
   test("fails clearly when yt-dlp is missing", async () => {
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => null,
-      finalizeAudioFile: async () => {},
-      runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
-    });
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
+      },
+      {
+        which: () => null,
+        finalizeAudioFile: async () => {},
+        runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      },
+    );
 
     await expect(provider.search("song", 5)).rejects.toThrow(
       new DownloadError("yt-dlp is not installed"),
@@ -836,16 +884,19 @@ describe("YoutubeMusicProvider", () => {
   });
 
   test("surfaces search timeouts clearly", async () => {
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async () => {},
-      runCommand: async () => {
-        throw new DownloadError("timeout exceeded");
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
       },
-    });
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async () => {},
+        runCommand: async () => {
+          throw new DownloadError("timeout exceeded");
+        },
+      },
+    );
 
     await expect(provider.search("song", 5)).rejects.toThrow(
       new DownloadError("timeout exceeded"),
@@ -854,42 +905,47 @@ describe("YoutubeMusicProvider", () => {
 
   test("cleans up yt-dlp temp artifacts when cancelled mid-download", async () => {
     const tempDir = createTempDir();
-    const provider = new YoutubeMusicProvider({
-      id: "youtube-music",
-      searchMode: "music",
-    }, {
-      which: () => "/usr/bin/yt-dlp",
-      finalizeAudioFile: async () => {},
-      runCommand: async (cmd) => {
-        if (cmd.includes("--dump-single-json")) {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              title: "Song title",
-              duration: 222,
-              formats: [
-                {
-                  format_id: "ba",
-                  acodec: "opus",
-                  vcodec: "none",
-                  abr: 160,
-                  ext: "webm",
-                },
-              ],
-            }),
-            stderr: "",
-          };
-        }
-
-        const outputArgIndex = cmd.indexOf("--output");
-        const outputTemplate = cmd[outputArgIndex + 1]!;
-        const basename = path.basename(outputTemplate).replace(".%(ext)s", "");
-        await Bun.write(path.join(tempDir, `${basename}.webm`), "audio");
-        await Bun.write(path.join(tempDir, `${basename}.mp3`), "audio");
-        await Bun.write(path.join(tempDir, `${basename}.webp`), "thumb");
-        throw new OperationCancelledError("operation cancelled");
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube-music",
+        searchMode: "music",
       },
-    });
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async () => {},
+        runCommand: async (cmd) => {
+          if (cmd.includes("--dump-single-json")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                title: "Song title",
+                duration: 222,
+                formats: [
+                  {
+                    format_id: "ba",
+                    acodec: "opus",
+                    vcodec: "none",
+                    abr: 160,
+                    ext: "webm",
+                  },
+                ],
+              }),
+              stderr: "",
+            };
+          }
+
+          const outputArgIndex = cmd.indexOf("--output");
+          const outputTemplate = cmd[outputArgIndex + 1]!;
+          const basename = path
+            .basename(outputTemplate)
+            .replace(".%(ext)s", "");
+          await Bun.write(path.join(tempDir, `${basename}.webm`), "audio");
+          await Bun.write(path.join(tempDir, `${basename}.mp3`), "audio");
+          await Bun.write(path.join(tempDir, `${basename}.webp`), "thumb");
+          throw new OperationCancelledError("operation cancelled");
+        },
+      },
+    );
 
     await expect(
       provider.download(
