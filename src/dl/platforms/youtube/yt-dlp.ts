@@ -292,6 +292,16 @@ export function parseYtDlpMetadata<T>(stdout: string): T | null {
   }
 }
 
+// yt-dlp ranks the original audio track above auto-dubbed and descriptive ones
+// via language_preference (missing counts as -1, same as yt-dlp's "lang" sort).
+export function keepOriginalAudioTrackFormats<
+  T extends { language_preference?: number },
+>(formats: T[]): T[] {
+  const getPreference = (format: T) => format.language_preference ?? -1;
+  const bestPreference = Math.max(...formats.map(getPreference));
+  return formats.filter((format) => getPreference(format) === bestPreference);
+}
+
 function parseProgressLine(line: string): DownloadProgress | null {
   const percentMatch = line.match(
     /^\[download\]\s+(\d+(?:\.\d+)?)% of\s+(.+?)(?: at\s+(.+?)\s+ETA\s+(.+))?$/,

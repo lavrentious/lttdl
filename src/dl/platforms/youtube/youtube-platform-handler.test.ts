@@ -227,6 +227,90 @@ describe("YoutubePlatformHandler", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  test("uses the original audio track instead of auto-dubs for auto presets", async () => {
+    const tempDir = createTempDir();
+    const selectedFormatArgs: string[] = [];
+    const handler = new YoutubePlatformHandler({
+      which: () => "/usr/bin/yt-dlp",
+      runCommand: async (cmd) => {
+        if (cmd.includes("--dump-single-json")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              title: "Dubbed video",
+              webpage_url: "https://youtu.be/dubbed-video",
+              duration: 100,
+              formats: [
+                {
+                  format_id: "137",
+                  ext: "mp4",
+                  width: 1920,
+                  height: 1080,
+                  fps: 30,
+                  tbr: 4000,
+                  vcodec: "avc1",
+                  acodec: "none",
+                  filesize: 20 * 1024 * 1024,
+                },
+                {
+                  format_id: "140-0",
+                  ext: "m4a",
+                  abr: 130.725,
+                  tbr: 130.725,
+                  vcodec: "none",
+                  acodec: "mp4a",
+                  filesize: 2 * 1024 * 1024,
+                  language_preference: -1,
+                },
+                {
+                  format_id: "140-1",
+                  ext: "m4a",
+                  abr: 96,
+                  tbr: 96,
+                  vcodec: "none",
+                  acodec: "mp4a",
+                  filesize: 1 * 1024 * 1024,
+                  language_preference: 10,
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+
+        selectedFormatArgs.push(cmd[cmd.indexOf("-f") + 1]!);
+        const outputArgIndex = cmd.indexOf("--output");
+        const outputTemplate = cmd[outputArgIndex + 1]!;
+        const ext = cmd.includes("-x") ? "mp3" : "mp4";
+        await Bun.write(outputTemplate.replace("%(ext)s", ext), "media");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            title: "Dubbed video",
+            webpage_url: "https://youtu.be/dubbed-video",
+          }),
+          stderr: "",
+        };
+      },
+      getVideoResolution: async () => ({ width: 1920, height: 1080 }),
+    });
+
+    for (const youtubePreset of [
+      "auto-audio-only",
+      "auto-video-audio",
+    ] as const) {
+      const result = await handler.download!(
+        "https://youtu.be/dubbed-video",
+        { youtubePreset },
+        { tempDir, maxFileSize: 50 * 1024 * 1024 },
+      );
+      result.cleanup();
+    }
+
+    expect(selectedFormatArgs).toEqual(["140-1", "137+140-1"]);
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
   test("fails auto video+audio when only audio fits under the limit", async () => {
     const tempDir = createTempDir();
     const handler = new YoutubePlatformHandler({

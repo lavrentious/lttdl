@@ -24,6 +24,7 @@ import {
   buildYtDlpArgs,
   cleanupYtDlpArtifacts,
   emitProgressFromYtDlpLine,
+  keepOriginalAudioTrackFormats,
   parseYtDlpMetadata,
   resolveYtDlpFinalPath,
   runYtDlpCommand,
@@ -56,6 +57,7 @@ type YoutubeFormat = {
   vcodec?: string;
   acodec?: string;
   protocol?: string;
+  language_preference?: number;
 };
 
 type DownloadPlan = {
@@ -231,9 +233,11 @@ function buildAutomaticVideoCandidates(
       };
     });
 
-  const audioFormats = formats
-    .filter((format) => !formatHasVideo(format) && formatHasAudio(format))
-    .filter((format) => !!format.format_id);
+  const audioFormats = keepOriginalAudioTrackFormats(
+    formats
+      .filter((format) => !formatHasVideo(format) && formatHasAudio(format))
+      .filter((format) => !!format.format_id),
+  );
 
   const videoOnlyFormats = formats
     .filter((format) => formatHasVideo(format) && !formatHasAudio(format))
@@ -340,9 +344,11 @@ function chooseAutoAudioOnlyPlan(
 ): DownloadPlan {
   const formats = metadata.formats || [];
   const duration = metadata.duration;
-  const audioFormats = formats
-    .filter((format) => !formatHasVideo(format) && formatHasAudio(format))
-    .filter((format) => !!format.format_id);
+  const audioFormats = keepOriginalAudioTrackFormats(
+    formats
+      .filter((format) => !formatHasVideo(format) && formatHasAudio(format))
+      .filter((format) => !!format.format_id),
+  );
 
   const audioCandidates = audioFormats
     .map((format) => ({

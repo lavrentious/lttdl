@@ -663,6 +663,85 @@ describe("YoutubeMusicProvider", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  test("prefers the original audio track over higher bitrate auto-dubs", async () => {
+    const tempDir = createTempDir();
+    let downloadCommand: string[] = [];
+    const provider = new YoutubeMusicProvider(
+      {
+        id: "youtube",
+        searchMode: "youtube",
+      },
+      {
+        which: () => "/usr/bin/yt-dlp",
+        finalizeAudioFile: async (inputPath, outputPath) => {
+          await Bun.write(outputPath, await Bun.file(inputPath).bytes());
+        },
+        runCommand: async (cmd) => {
+          if (cmd.includes("--dump-single-json")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                title: "Dubbed video",
+                duration: 6,
+                formats: [
+                  {
+                    format_id: "251-0",
+                    acodec: "opus",
+                    vcodec: "none",
+                    abr: 128.429,
+                    tbr: 128.429,
+                    ext: "webm",
+                    language: "es-US",
+                    language_preference: -1,
+                  },
+                  {
+                    format_id: "251-1",
+                    acodec: "opus",
+                    vcodec: "none",
+                    abr: 88.393,
+                    tbr: 88.393,
+                    ext: "webm",
+                    language: "en-US",
+                    language_preference: 10,
+                  },
+                ],
+              }),
+              stderr: "",
+            };
+          }
+
+          downloadCommand = cmd;
+          const outputArgIndex = cmd.indexOf("--output");
+          if (outputArgIndex >= 0) {
+            const outputTemplate = cmd[outputArgIndex + 1]!;
+            const finalPath = outputTemplate.replace("%(ext)s", "mp3");
+            await Bun.write(finalPath, "audio");
+          }
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({}),
+            stderr: "",
+          };
+        },
+      },
+    );
+
+    await provider.download(
+      {
+        id: "dubbed",
+        url: "https://www.youtube.com/watch?v=dubbed",
+        title: "Dubbed video",
+      },
+      {
+        tempDir,
+        maxFileSize: 50 * 1024 * 1024,
+      },
+    );
+
+    expect(downloadCommand[downloadCommand.indexOf("-f") + 1]).toBe("251-1");
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
   test("considers progressive formats when they expose a higher audio bitrate", async () => {
     const tempDir = createTempDir();
     let downloadCommand: string[] = [];

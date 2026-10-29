@@ -5,6 +5,7 @@ import {
   buildYtDlpArgs,
   cleanupYtDlpArtifacts,
   emitProgressFromYtDlpLine,
+  keepOriginalAudioTrackFormats,
   parseYtDlpMetadata,
   resolveYtDlpFinalPath,
   runYtDlpCommand,
@@ -74,6 +75,7 @@ type DownloadFormat = {
   acodec?: string;
   vcodec?: string;
   protocol?: string;
+  language_preference?: number;
 };
 
 type YoutubeMusicProviderDeps = {
@@ -264,9 +266,11 @@ function chooseAudioDownloadFormat(
   maxFileSize?: number,
 ): { formatArgs: string[]; estimatedSizeBytes?: number; description: string } {
   const duration = metadata.duration;
-  const audioCandidates = (metadata.formats || [])
-    .filter((format) => formatHasAudio(format))
-    .filter((format) => !!format.format_id)
+  const audioCandidates = keepOriginalAudioTrackFormats(
+    (metadata.formats || [])
+      .filter((format) => formatHasAudio(format))
+      .filter((format) => !!format.format_id),
+  )
     .map((format) => ({
       formatId: format.format_id!,
       hasVideo: formatHasVideo(format),
