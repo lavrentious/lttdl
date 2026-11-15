@@ -66,7 +66,7 @@ function createBot() {
         "send text query to search tracks and download one as mp3 (or use /music <query>).\n" +
         "use !yt <query> or !ytm <query> to force a music search provider.\n" +
         "use !v / !a / !bv / !ba before a url to override the youtube download preset for one download.\n" +
-        "use /settings to configure verbose output, tiktok providers, youtube preset, music search provider, and music search cookies.",
+        "use /settings to configure verbose output, tiktok providers, youtube preset, music search provider, music search cookies, and spoilers.",
     ),
   );
   bot.command("settings", settingsCommand);

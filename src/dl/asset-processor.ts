@@ -1,6 +1,10 @@
 import { randomUUIDv7 } from "bun";
 import { isCancelledError } from "src/errors/download-error";
-import { getImageResolution, recodeImageToJpeg } from "src/utils/image";
+import {
+  getImageResolution,
+  recodeImageToJpeg,
+  type RecodeImageOptions,
+} from "src/utils/image";
 import { logger } from "src/utils/logger";
 import {
   ensureMp4Video,
@@ -135,6 +139,7 @@ export class AssetProcessor {
     tempDir: string,
     onProgress?: (progress: DownloadProgress) => void | Promise<void>,
     signal?: AbortSignal,
+    recodeOptions?: RecodeImageOptions,
   ): Promise<PhotoVariant> {
     logger.debug(`downloading image from ${variant.url}...`);
     let path: string | null = null;
@@ -151,7 +156,7 @@ export class AssetProcessor {
       const downloadedPath = path;
       const finalPath = recodedPath;
 
-      await recodeImageToJpeg(downloadedPath, finalPath);
+      await recodeImageToJpeg(downloadedPath, finalPath, recodeOptions);
       const resolution = await getImageResolution(finalPath);
 
       return {

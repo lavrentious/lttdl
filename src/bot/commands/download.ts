@@ -33,6 +33,8 @@ import { createAndShareZip, shareFile } from "src/file-share/file-share";
 import {
   getDefaultUserSettings,
   getUserSettings,
+  shouldUseSpoiler,
+  type SpoilerMode,
 } from "src/settings/user-settings";
 import { chunkArray } from "src/utils/array";
 import { config } from "src/utils/env-validation";
@@ -239,7 +241,10 @@ type GalleryUploadableMedia = {
     | ReturnType<typeof InputMediaBuilder.video>;
 };
 
-function getGalleryUploadableMedia(entries: GalleryEntry[]) {
+function getGalleryUploadableMedia(
+  entries: GalleryEntry[],
+  spoilerMode: SpoilerMode,
+) {
   const media: GalleryUploadableMedia[] = [];
 
   entries.forEach((entry, index) => {
@@ -254,7 +259,9 @@ function getGalleryUploadableMedia(entries: GalleryEntry[]) {
 
       media.push({
         index,
-        media: InputMediaBuilder.photo(new InputFile(uploaded.path)),
+        media: InputMediaBuilder.photo(new InputFile(uploaded.path), {
+          has_spoiler: shouldUseSpoiler(spoilerMode, uploaded.contentRating),
+        }),
       });
       return;
     }
@@ -270,7 +277,9 @@ function getGalleryUploadableMedia(entries: GalleryEntry[]) {
 
     media.push({
       index,
-      media: InputMediaBuilder.video(new InputFile(uploaded.path)),
+      media: InputMediaBuilder.video(new InputFile(uploaded.path), {
+        has_spoiler: shouldUseSpoiler(spoilerMode, uploaded.contentRating),
+      }),
     });
   });
 
@@ -490,6 +499,10 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
             height: variant.payload.resolution.height,
             duration: variant.payload.durationSeconds,
             supports_streaming: true,
+            has_spoiler: shouldUseSpoiler(
+              userSettings.spoilerMode,
+              variant.contentRating,
+            ),
           }),
       });
       logger.info(`sent video ${query} to ${ctx.from?.id ?? "unknown user"}`);
@@ -513,6 +526,12 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
                 ? downloaded[0]!.path
                 : variants[0]!.downloadUrl,
             ),
+            {
+              has_spoiler: shouldUseSpoiler(
+                userSettings.spoilerMode,
+                variants[0]!.contentRating,
+              ),
+            },
           );
         });
       // one best downloaded variant per image, labelled by 1-based position
@@ -622,10 +641,13 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
       await sendShareUrls(ctx, musicShareUrls);
     } else if (res.contentType === "gallery") {
       const msg2 = await ctx.reply(
-        `pinterest items downloaded, sending... (${res.entries.length} items)`,
+        `items downloaded, sending... (${res.entries.length} items)`,
       );
       const galleryLinks = buildGalleryLinksMessages(res.entries);
-      const uploadableMedia = getGalleryUploadableMedia(res.entries);
+      const uploadableMedia = getGalleryUploadableMedia(
+        res.entries,
+        userSettings.spoilerMode,
+      );
       const skippedIndexes = new Set(
         res.entries
           .map((_, index) => index)
@@ -663,7 +685,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
         deleteMessageSafe(ctx, msg1);
         deleteMessageSafe(ctx, msg2);
         await ctx.reply(
-          `pinterest items were resolved, but nothing uploadable was produced. sending links instead.`,
+          `items were resolved, but nothing uploadable was produced. sending links instead.`,
         );
         await sendChunkedLinks(ctx, galleryLinks);
         await sendGalleryShareUrls(ctx, galleryShareResults, galleryZipUrl);
@@ -702,7 +724,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
 
       if (uploadFailed) {
         await ctx.reply(
-          `pinterest items were downloaded, but Telegram rejected the upload. sending links instead.`,
+          `items were downloaded, but Telegram rejected the upload. sending links instead.`,
         );
         await sendChunkedLinks(ctx, galleryLinks);
         await sendGalleryShareUrls(ctx, galleryShareResults, galleryZipUrl);
@@ -712,7 +734,7 @@ export const downloadCommand: MiddlewareFn<Filter<Context, "message">> = async (
 
       if (skippedIndexes.size) {
         await ctx.reply(
-          `some pinterest items could not be uploaded. sending links for the skipped items.`,
+          `some items could not be uploaded. sending links for the skipped items.`,
         );
         await sendChunkedLinks(
           ctx,

@@ -1,4 +1,10 @@
-export type Platform = "tiktok" | "youtube" | "pinterest" | "instagram" | "x";
+export type Platform =
+  | "tiktok"
+  | "youtube"
+  | "pinterest"
+  | "instagram"
+  | "x"
+  | "e621";
 export type YoutubePreset =
   | "auto-video-audio"
   | "auto-audio-only"
@@ -9,6 +15,9 @@ export type YoutubePreset =
   | "mid-audio";
 
 export type ContentKind = "video" | "image" | "audio";
+
+// s = safe, q = questionable, e = explicit
+export type ContentRating = "s" | "q" | "e";
 
 export type ResolvedVariant = {
   url: string;
@@ -37,6 +46,7 @@ export type ResolvedContent = {
 
 export type ContentVariant<T> = {
   downloadUrl: string;
+  contentRating?: ContentRating;
   cleanup?: () => void;
 } & (
   | {

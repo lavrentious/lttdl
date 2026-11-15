@@ -14,7 +14,7 @@ import {
   ALL_YOUTUBE_PRESETS,
   DEFAULT_YOUTUBE_PRESET,
 } from "src/dl/platforms/youtube/types";
-import type { YoutubePreset } from "src/dl/types";
+import type { ContentRating, YoutubePreset } from "src/dl/types";
 import { config } from "src/utils/env-validation";
 import { logger } from "src/utils/logger";
 
@@ -38,9 +38,41 @@ export const FILE_SHARE_MODE_DESCRIPTIONS: Record<FileShareMode, string> = {
   never: "`never` — disable file sharing for your downloads.",
 };
 
+export type SpoilerMode = "all" | "none" | "rating:e" | "rating:q";
+export const ALL_SPOILER_MODES: SpoilerMode[] = [
+  "all",
+  "none",
+  "rating:e",
+  "rating:q",
+];
+export const DEFAULT_SPOILER_MODE: SpoilerMode = "none";
+export const SPOILER_MODE_DESCRIPTIONS: Record<SpoilerMode, string> = {
+  all: "`all` — cover every image and video with a spoiler.",
+  none: "`none` — never use spoilers. (default)",
+  "rating:e": "`rating:e` — cover only media rated explicit.",
+  "rating:q": "`rating:q` — cover media rated explicit or questionable.",
+};
+
+export function shouldUseSpoiler(
+  mode: SpoilerMode,
+  rating: ContentRating | undefined,
+): boolean {
+  switch (mode) {
+    case "all":
+      return true;
+    case "none":
+      return false;
+    case "rating:e":
+      return rating === "e";
+    case "rating:q":
+      return rating === "e" || rating === "q";
+  }
+}
+
 export type UserSettings = {
   verboseOutput: boolean;
   fileShareMode: FileShareMode;
+  spoilerMode: SpoilerMode;
   platformPreferences: {
     tiktok: {
       providers: TiktokProvider[];
@@ -62,12 +94,14 @@ type UserSettingsRow = {
   music_search_provider: string;
   music_search_with_cookies: number;
   file_share_mode: string;
+  spoiler_mode: string;
 };
 
 const DEFAULT_TIKTOK_PROVIDERS: TiktokProvider[] = ["v2"];
 const DEFAULT_USER_SETTINGS: UserSettings = {
   verboseOutput: false,
   fileShareMode: DEFAULT_FILE_SHARE_MODE,
+  spoilerMode: DEFAULT_SPOILER_MODE,
   platformPreferences: {
     tiktok: {
       providers: DEFAULT_TIKTOK_PROVIDERS,
@@ -130,6 +164,12 @@ function normalizeFileShareMode(value: string): FileShareMode {
     : DEFAULT_FILE_SHARE_MODE;
 }
 
+function normalizeSpoilerMode(value: string): SpoilerMode {
+  return ALL_SPOILER_MODES.includes(value as SpoilerMode)
+    ? (value as SpoilerMode)
+    : DEFAULT_SPOILER_MODE;
+}
+
 function normalizeBoolean(value: unknown): boolean {
   return value === true || value === 1 || value === "1";
 }
@@ -160,6 +200,7 @@ function rowToUserSettings(row: UserSettingsRow): UserSettings {
   return {
     verboseOutput: Boolean(row.verbose_output),
     fileShareMode: normalizeFileShareMode(row.file_share_mode),
+    spoilerMode: normalizeSpoilerMode(row.spoiler_mode),
     platformPreferences: {
       tiktok: {
         providers: parseTiktokProviders(row.tiktok_providers),
@@ -205,6 +246,12 @@ function ensureUserSettingsColumns(database: Database) {
       ALTER TABLE user_settings ADD COLUMN file_share_mode TEXT NOT NULL DEFAULT 'as-fallback';
     `);
   } catch {}
+
+  try {
+    database.exec(`
+      ALTER TABLE user_settings ADD COLUMN spoiler_mode TEXT NOT NULL DEFAULT 'none';
+    `);
+  } catch {}
 }
 
 function upsertUserSettings(
@@ -222,9 +269,10 @@ function upsertUserSettings(
           music_search_provider,
           music_search_with_cookies,
           file_share_mode,
+          spoiler_mode,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(user_id) DO UPDATE SET
           verbose_output = excluded.verbose_output,
           tiktok_providers = excluded.tiktok_providers,
@@ -232,6 +280,7 @@ function upsertUserSettings(
           music_search_provider = excluded.music_search_provider,
           music_search_with_cookies = excluded.music_search_with_cookies,
           file_share_mode = excluded.file_share_mode,
+          spoiler_mode = excluded.spoiler_mode,
           updated_at = CURRENT_TIMESTAMP
       `,
     )
@@ -243,6 +292,7 @@ function upsertUserSettings(
       nextSettings.platformPreferences.music.searchProvider,
       Number(nextSettings.platformPreferences.music.searchWithCookies),
       nextSettings.fileShareMode,
+      nextSettings.spoilerMode,
     );
 
   return getUserSettings(userId);
@@ -273,6 +323,7 @@ export function getDefaultUserSettings(): UserSettings {
   return {
     verboseOutput: DEFAULT_USER_SETTINGS.verboseOutput,
     fileShareMode: DEFAULT_USER_SETTINGS.fileShareMode,
+    spoilerMode: DEFAULT_USER_SETTINGS.spoilerMode,
     platformPreferences: {
       tiktok: {
         providers: [
@@ -295,7 +346,7 @@ export function getDefaultUserSettings(): UserSettings {
 export function getUserSettings(userId: number): UserSettings {
   const row = getDbOrThrow()
     .query(
-      "SELECT verbose_output, tiktok_providers, youtube_preset, music_search_provider, music_search_with_cookies, file_share_mode FROM user_settings WHERE user_id = ?",
+      "SELECT verbose_output, tiktok_providers, youtube_preset, music_search_provider, music_search_with_cookies, file_share_mode, spoiler_mode FROM user_settings WHERE user_id = ?",
     )
     .get(userId) as UserSettingsRow | null;
 
@@ -415,5 +466,16 @@ export function updateUserFileShareMode(
   return upsertUserSettings(userId, {
     ...current,
     fileShareMode: normalizeFileShareMode(mode),
+  });
+}
+
+export function updateUserSpoilerMode(
+  userId: number,
+  mode: SpoilerMode,
+): UserSettings {
+  const current = getUserSettings(userId);
+  return upsertUserSettings(userId, {
+    ...current,
+    spoilerMode: normalizeSpoilerMode(mode),
   });
 }

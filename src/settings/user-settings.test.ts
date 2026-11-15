@@ -9,9 +9,11 @@ import {
   initUserSettingsDb,
   parseMusicSearchProviderInput,
   parseYoutubePresetInput,
+  shouldUseSpoiler,
   updateUserFileShareMode,
   updateUserMusicSearchProvider,
   updateUserMusicSearchWithCookies,
+  updateUserSpoilerMode,
   updateUserTiktokProviders,
   updateUserVerboseOutput,
   updateUserYoutubePreset,
@@ -182,6 +184,34 @@ describe("user settings", () => {
 
     expect(settings.fileShareMode).toBe("never");
     expect(settings.platformPreferences.youtube.preset).toBe("best");
+  });
+
+  test("returns spoiler mode default", () => {
+    expect(getDefaultUserSettings().spoilerMode).toBe("none");
+  });
+
+  test("persists spoiler mode and keeps it across other updates", () => {
+    const userId = 108;
+    updateUserSpoilerMode(userId, "rating:q");
+    updateUserVerboseOutput(userId, true);
+    updateUserFileShareMode(userId, "always");
+
+    const settings = getUserSettings(userId);
+
+    expect(settings.spoilerMode).toBe("rating:q");
+    expect(settings.verboseOutput).toBe(true);
+    expect(settings.fileShareMode).toBe("always");
+  });
+
+  test("decides spoilers by mode and rating", () => {
+    const ratings = ["s", "q", "e", undefined] as const;
+    const decide = (mode: Parameters<typeof shouldUseSpoiler>[0]) =>
+      ratings.map((rating) => shouldUseSpoiler(mode, rating));
+
+    expect(decide("all")).toEqual([true, true, true, true]);
+    expect(decide("none")).toEqual([false, false, false, false]);
+    expect(decide("rating:e")).toEqual([false, false, true, false]);
+    expect(decide("rating:q")).toEqual([false, true, true, false]);
   });
 });
 

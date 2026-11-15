@@ -22,16 +22,20 @@ import {
 import type { YoutubePreset } from "src/dl/types";
 import {
   ALL_FILE_SHARE_MODES,
+  ALL_SPOILER_MODES,
   FILE_SHARE_MODE_DESCRIPTIONS,
   FILE_SHARE_MODE_LABELS,
   getUserSettings,
+  SPOILER_MODE_DESCRIPTIONS,
   updateUserFileShareMode,
   updateUserMusicSearchProvider,
   updateUserMusicSearchWithCookies,
+  updateUserSpoilerMode,
   updateUserTiktokProviders,
   updateUserVerboseOutput,
   updateUserYoutubePreset,
   type FileShareMode,
+  type SpoilerMode,
 } from "src/settings/user-settings";
 import { config } from "src/utils/env-validation";
 
@@ -59,7 +63,8 @@ function formatMainSettingsMessage(userId: number): string {
     `tiktok providers choose the internal extraction paths for tiktok links.\n` +
     `youtube preset chooses how youtube links are downloaded with yt-dlp.\n\n` +
     `music search provider chooses whether /music searches the YouTube Music songs section or regular YouTube videos before downloading.\n` +
-    `music search cookies controls whether /music search runs yt-dlp with --cookies. this can help with restricted results, but it is slower.` +
+    `music search cookies controls whether /music search runs yt-dlp with --cookies. this can help with restricted results, but it is slower.\n\n` +
+    `spoilers controls which images and videos are sent covered with a spoiler.` +
     (fileShareEnabled
       ? `\n\nfile sharing controls when the bot sends a direct download link alongside the Telegram upload.`
       : ``);
@@ -70,7 +75,8 @@ function formatMainSettingsMessage(userId: number): string {
     `tiktok providers: ${settings.platformPreferences.tiktok.providers.join(", ")}\n` +
     `youtube preset: ${YOUTUBE_PRESET_LABELS[settings.platformPreferences.youtube.preset]}\n` +
     `music search provider: ${MUSIC_SEARCH_PROVIDER_LABELS[settings.platformPreferences.music.searchProvider]}\n` +
-    `music search cookies: ${settings.platformPreferences.music.searchWithCookies ? "on" : "off"}` +
+    `music search cookies: ${settings.platformPreferences.music.searchWithCookies ? "on" : "off"}\n` +
+    `spoilers: ${settings.spoilerMode}` +
     (fileShareEnabled
       ? `\nfile sharing: ${FILE_SHARE_MODE_LABELS[settings.fileShareMode]}`
       : ``);
@@ -132,6 +138,33 @@ function formatFileShareModeMessage(userId: number): string {
   );
 }
 
+function formatSpoilerModeMessage(userId: number): string {
+  const settings = getUserSettings(userId);
+
+  return (
+    `*spoilers*\n\n` +
+    `controls which images and videos are sent covered with a spoiler.\n\n` +
+    `*current*: ${settings.spoilerMode}\n\n` +
+    ALL_SPOILER_MODES.map((mode) => SPOILER_MODE_DESCRIPTIONS[mode]).join("\n")
+  );
+}
+
+function buildSpoilerModeKeyboard(userId: number): InlineKeyboard {
+  const currentMode = getUserSettings(userId).spoilerMode;
+  const keyboard = new InlineKeyboard();
+
+  for (const mode of ALL_SPOILER_MODES) {
+    keyboard
+      .text(
+        `${selectIcon(currentMode === mode)} ${mode}`,
+        `${SETTINGS_CALLBACK_PREFIX}:set_spoiler_mode:${userId}:${mode}`,
+      )
+      .row();
+  }
+
+  return keyboard.text("back", `${SETTINGS_CALLBACK_PREFIX}:main:${userId}`);
+}
+
 function buildFileShareModeKeyboard(userId: number): InlineKeyboard {
   const settings = getUserSettings(userId);
   const currentMode = settings.fileShareMode;
@@ -175,7 +208,9 @@ function buildMainSettingsKeyboard(userId: number): InlineKeyboard {
     .text(
       `music search cookies ${icon(settings.platformPreferences.music.searchWithCookies)}`,
       `${SETTINGS_CALLBACK_PREFIX}:toggle_music_search_cookies:${userId}`,
-    );
+    )
+    .row()
+    .text("spoilers >>", `${SETTINGS_CALLBACK_PREFIX}:spoiler_mode:${userId}`);
 
   if (config.get("FILE_SHARE_ENABLED")) {
     keyboard
@@ -247,7 +282,8 @@ async function editSettingsMessage(
     | "providers"
     | "youtube_preset"
     | "music_provider"
-    | "file_share_mode",
+    | "file_share_mode"
+    | "spoiler_mode",
   userId: number,
 ) {
   const text =
@@ -259,7 +295,9 @@ async function editSettingsMessage(
           ? formatYoutubePresetMessage(userId)
           : view === "music_provider"
             ? formatMusicProviderMessage(userId)
-            : formatFileShareModeMessage(userId);
+            : view === "spoiler_mode"
+              ? formatSpoilerModeMessage(userId)
+              : formatFileShareModeMessage(userId);
   const replyMarkup =
     view === "main"
       ? buildMainSettingsKeyboard(userId)
@@ -269,7 +307,9 @@ async function editSettingsMessage(
           ? buildYoutubePresetKeyboard(userId)
           : view === "music_provider"
             ? buildMusicProviderKeyboard(userId)
-            : buildFileShareModeKeyboard(userId);
+            : view === "spoiler_mode"
+              ? buildSpoilerModeKeyboard(userId)
+              : buildFileShareModeKeyboard(userId);
 
   await ctx.editMessageText(text, {
     parse_mode: "Markdown",
@@ -285,6 +325,7 @@ function parseCallbackData(data: string):
         | "youtube_preset"
         | "music_provider"
         | "file_share_mode"
+        | "spoiler_mode"
         | "toggle_verbose"
         | "toggle_music_search_cookies";
       userId: number;
@@ -309,6 +350,11 @@ function parseCallbackData(data: string):
       userId: number;
       mode: FileShareMode;
     }
+  | {
+      action: "set_spoiler_mode";
+      userId: number;
+      mode: SpoilerMode;
+    }
   | null {
   const parts = data.split(":");
   if (parts[0] !== SETTINGS_CALLBACK_PREFIX) {
@@ -326,6 +372,7 @@ function parseCallbackData(data: string):
     parts[1] === "youtube_preset" ||
     parts[1] === "music_provider" ||
     parts[1] === "file_share_mode" ||
+    parts[1] === "spoiler_mode" ||
     parts[1] === "toggle_verbose" ||
     parts[1] === "toggle_music_search_cookies"
   ) {
@@ -380,6 +427,15 @@ function parseCallbackData(data: string):
     };
   }
 
+  // spoiler modes like "rating:e" contain the separator themselves
+  const spoilerMode = parts.slice(3).join(":") as SpoilerMode;
+  if (
+    parts[1] === "set_spoiler_mode" &&
+    ALL_SPOILER_MODES.includes(spoilerMode)
+  ) {
+    return { action: "set_spoiler_mode", userId, mode: spoilerMode };
+  }
+
   return null;
 }
 
@@ -419,7 +475,8 @@ export async function settingsCallbackQuery(
     parsed.action === "providers" ||
     parsed.action === "youtube_preset" ||
     parsed.action === "music_provider" ||
-    parsed.action === "file_share_mode"
+    parsed.action === "file_share_mode" ||
+    parsed.action === "spoiler_mode"
   ) {
     await editSettingsMessage(ctx, parsed.action, parsed.userId);
     await ctx.answerCallbackQuery();
@@ -482,6 +539,13 @@ export async function settingsCallbackQuery(
   if (parsed.action === "set_file_share_mode") {
     updateUserFileShareMode(parsed.userId, parsed.mode);
     await editSettingsMessage(ctx, "file_share_mode", parsed.userId);
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  if (parsed.action === "set_spoiler_mode") {
+    updateUserSpoilerMode(parsed.userId, parsed.mode);
+    await editSettingsMessage(ctx, "spoiler_mode", parsed.userId);
     await ctx.answerCallbackQuery();
     return;
   }

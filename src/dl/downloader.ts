@@ -4,6 +4,7 @@ import { config } from "src/utils/env-validation";
 import { AssetDownloader } from "./asset-downloader";
 import { AssetProcessor } from "./asset-processor";
 import type { PlatformHandler, ResolveContext } from "./platform-handler";
+import { E621PlatformHandler } from "./platforms/e621/e621-platform-handler";
 import { InstagramPlatformHandler } from "./platforms/instagram/instagram-platform-handler";
 import { PinterestPlatformHandler } from "./platforms/pinterest/pinterest-platform-handler";
 import { TiktokPlatformHandler } from "./platforms/tiktok/tiktok-platform-handler";
@@ -59,6 +60,7 @@ const defaultRouter = new DownloadRouter([
   new PinterestPlatformHandler(),
   new InstagramPlatformHandler(),
   new XPlatformHandler(),
+  new E621PlatformHandler(),
 ]);
 
 const assetProcessor = new AssetProcessor(new AssetDownloader());

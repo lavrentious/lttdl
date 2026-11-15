@@ -104,6 +104,7 @@ per-user configuration, accessible via the `/settings` command:
 - **youtube preset** — quality and format preference for youtube downloads (`auto-video-audio`, `best`, `fast-1080`, `fast-720`, `auto-audio-only`, `best-audio`, `mid-audio`)
 - **music search provider** — `youtube music` (songs section) or `youtube` (video results)
 - **music search cookies** — use yt-dlp cookies when searching music (helps with restricted results, slower)
+- **spoilers** — which images and videos are sent covered with a spoiler: `all`, `none` (default), `rating:e` (explicit only), `rating:q` (explicit or questionable)
 
 ### music search
 

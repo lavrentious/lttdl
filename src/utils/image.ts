@@ -15,10 +15,33 @@ export async function getImageResolution(path: string) {
   return { width: +meta.width, height: +meta.height };
 }
 
-export async function recodeImageToJpeg(path: string, newPath: string) {
+export type RecodeImageOptions = {
+  // downscale so neither side exceeds this (telegram rejects photos with w+h > 10000)
+  maxSide?: number;
+  // fill transparent areas with this color instead of jpeg's default black
+  background?: string;
+};
+
+export async function recodeImageToJpeg(
+  path: string,
+  newPath: string,
+  options: RecodeImageOptions = {},
+) {
   const imageProcessTimeoutMs = config.get("IMAGE_PROCESS_TIMEOUT_MS");
+  let img = sharp(path);
+  if (options.background) {
+    img = img.flatten({ background: options.background });
+  }
+  if (options.maxSide) {
+    img = img.resize({
+      width: options.maxSide,
+      height: options.maxSide,
+      fit: "inside",
+      withoutEnlargement: true,
+    });
+  }
   await withTimeout(
-    sharp(path).jpeg().toFile(newPath),
+    img.jpeg().toFile(newPath),
     imageProcessTimeoutMs,
     "image recode",
   );
