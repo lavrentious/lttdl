@@ -47,16 +47,21 @@ export const ALL_SPOILER_MODES: SpoilerMode[] = [
 ];
 export const DEFAULT_SPOILER_MODE: SpoilerMode = "none";
 export const SPOILER_MODE_DESCRIPTIONS: Record<SpoilerMode, string> = {
-  all: "`all` — cover every image and video with a spoiler.",
+  all: "`all` — cover all rated media with a spoiler.",
   none: "`none` — never use spoilers. (default)",
   "rating:e": "`rating:e` — cover only media rated explicit.",
   "rating:q": "`rating:q` — cover media rated explicit or questionable.",
 };
 
+// only sources that report a rating are affected; unrated media is never covered
 export function shouldUseSpoiler(
   mode: SpoilerMode,
   rating: ContentRating | undefined,
 ): boolean {
+  if (rating === undefined) {
+    return false;
+  }
+
   switch (mode) {
     case "all":
       return true;

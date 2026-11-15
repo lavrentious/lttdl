@@ -208,7 +208,7 @@ describe("user settings", () => {
     const decide = (mode: Parameters<typeof shouldUseSpoiler>[0]) =>
       ratings.map((rating) => shouldUseSpoiler(mode, rating));
 
-    expect(decide("all")).toEqual([true, true, true, true]);
+    expect(decide("all")).toEqual([true, true, true, false]);
     expect(decide("none")).toEqual([false, false, false, false]);
     expect(decide("rating:e")).toEqual([false, false, true, false]);
     expect(decide("rating:q")).toEqual([false, true, true, false]);

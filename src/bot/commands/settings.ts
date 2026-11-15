@@ -64,7 +64,7 @@ function formatMainSettingsMessage(userId: number): string {
     `youtube preset chooses how youtube links are downloaded with yt-dlp.\n\n` +
     `music search provider chooses whether /music searches the YouTube Music songs section or regular YouTube videos before downloading.\n` +
     `music search cookies controls whether /music search runs yt-dlp with --cookies. this can help with restricted results, but it is slower.\n\n` +
-    `spoilers controls which images and videos are sent covered with a spoiler.` +
+    `spoilers controls which rated images and videos are sent covered with a spoiler.` +
     (fileShareEnabled
       ? `\n\nfile sharing controls when the bot sends a direct download link alongside the Telegram upload.`
       : ``);
@@ -143,7 +143,7 @@ function formatSpoilerModeMessage(userId: number): string {
 
   return (
     `*spoilers*\n\n` +
-    `controls which images and videos are sent covered with a spoiler.\n\n` +
+    `controls which rated images and videos are sent covered with a spoiler. unrated media is never covered.\n\n` +
     `*current*: ${settings.spoilerMode}\n\n` +
     ALL_SPOILER_MODES.map((mode) => SPOILER_MODE_DESCRIPTIONS[mode]).join("\n")
   );
