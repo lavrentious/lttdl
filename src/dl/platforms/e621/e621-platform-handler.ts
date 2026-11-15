@@ -1,3 +1,4 @@
+import { buildOversizeMessage } from "src/dl/size-guard";
 import { DownloadError } from "src/errors/download-error";
 import {
   mapWithConcurrency,
@@ -17,6 +18,7 @@ import type {
   ContentRating,
   DownloadExecutionResult,
   DownloadOptions,
+  DownloadProgress,
   GalleryEntry,
   PhotoVariant,
   ResolvedVariant,
@@ -31,6 +33,8 @@ const STATIC_BASE = "https://static1.e621.net/data";
 const API_USER_AGENT = "media-downloader/1.0";
 const HOSTNAME = /^(?:www\.)?(e621|e926)\.net$/;
 const POOL_PATH = /^\/pools\/(\d+)(?:\.json)?\/?$/;
+// /post/show/N is the legacy post url, still linked from older sites
+const POST_PATH = /^\/(?:posts|post\/show)\/(\d+)(?:\.json)?\/?$/;
 const MAX_POOL_ITEMS = 100;
 const POST_ID_BATCH_SIZE = 100;
 const DOWNLOAD_CONCURRENCY = 4;
@@ -38,7 +42,6 @@ const DOWNLOAD_CONCURRENCY = 4;
 const MAX_IMAGE_SIDE = 4096;
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm"]);
-const VIDEO_SAMPLE_KEYS = ["720p", "480p"];
 
 type E621Pool = {
   id: number;
@@ -80,23 +83,28 @@ type JsonResponse = {
   data: unknown;
 };
 
+type ProgressCallback = (progress: DownloadProgress) => void | Promise<void>;
+
 type E621HandlerDeps = {
   fetchJson: (url: string, signal?: AbortSignal) => Promise<JsonResponse>;
   downloadImage: (
     variant: ResolvedVariant,
     tempDir: string,
+    onProgress?: ProgressCallback,
     signal?: AbortSignal,
   ) => Promise<PhotoVariant>;
   downloadVideo: (
     variant: ResolvedVariant,
     tempDir: string,
     maxFileSize?: number,
+    onProgress?: ProgressCallback,
     signal?: AbortSignal,
   ) => Promise<VideoVariant>;
 };
 
-type PoolTarget = {
-  poolId: number;
+type Target = {
+  kind: "pool" | "post";
+  id: number;
   host: string;
   safeOnly: boolean;
 };
@@ -159,23 +167,38 @@ async function retryJson(
   );
 }
 
-function parsePoolUrl(url: string): PoolTarget | null {
+function parseTarget(url: string): Target | null {
   try {
     const parsed = new URL(url);
     const host = HOSTNAME.exec(parsed.hostname.toLowerCase());
+    if (!host) {
+      return null;
+    }
+
     const pool = POOL_PATH.exec(parsed.pathname);
-    if (!host || !pool) {
+    const post = pool ? null : POST_PATH.exec(parsed.pathname);
+    const id = pool?.[1] ?? post?.[1];
+    if (!id) {
       return null;
     }
 
     return {
-      poolId: Number(pool[1]),
+      kind: pool ? "pool" : "post",
+      id: Number(id),
       host: `${host[1]}.net`,
       safeOnly: host[1] === "e926",
     };
   } catch {
     return null;
   }
+}
+
+function isVideoPost(post: E621Post): boolean {
+  return VIDEO_EXTENSIONS.has(post.file.ext.toLowerCase());
+}
+
+function isMp4Url(url: string): boolean {
+  return url.split("?")[0]!.toLowerCase().endsWith(".mp4");
 }
 
 function normalizeRating(rating: string): ContentRating | undefined {
@@ -199,6 +222,9 @@ function getOriginalFileUrl(post: E621Post): string | null {
   return `${STATIC_BASE}/${md5.slice(0, 2)}/${md5.slice(2, 4)}/${md5}.${ext}`;
 }
 
+// every encode e621 lists, best first: mp4s by resolution, then webms by
+// resolution. webm originals (vp9/av1) need ffmpeg and may not play inline
+// in telegram, so they're only used when no mp4 fits
 function getVideoCandidates(
   post: E621Post,
   maxFileSize?: number,
@@ -210,18 +236,26 @@ function getVideoCandidates(
     width: post.file.width,
     height: post.file.height,
   };
-  // h264 mp4s first so ffmpeg only has to remux; webm originals are a last resort
+  const area = (source: E621VideoSource) =>
+    (source.width ?? 0) * (source.height ?? 0);
+  // sort is stable, so the original wins ties against same-size encodes
   const sources = [
-    post.file.ext === "mp4" ? original : undefined,
-    alternates?.variants?.mp4,
-    ...VIDEO_SAMPLE_KEYS.map((key) => alternates?.samples?.[key]),
-    post.file.ext !== "mp4" ? original : undefined,
-  ];
+    original,
+    ...Object.values(alternates?.variants ?? {}),
+    ...Object.values(alternates?.samples ?? {}),
+  ]
+    .filter((source): source is E621VideoSource & { url: string } =>
+      Boolean(source?.url),
+    )
+    .sort(
+      (a, b) =>
+        Number(isMp4Url(b.url)) - Number(isMp4Url(a.url)) || area(b) - area(a),
+    );
 
   const seen = new Set<string>();
   const candidates: ResolvedVariant[] = [];
   for (const source of sources) {
-    if (!source?.url || seen.has(source.url)) {
+    if (seen.has(source.url)) {
       continue;
     }
     seen.add(source.url);
@@ -258,27 +292,53 @@ export class E621PlatformHandler implements PlatformHandler {
   constructor(
     private readonly deps: E621HandlerDeps = {
       fetchJson,
-      downloadImage: (variant, tempDir, signal) =>
+      downloadImage: (variant, tempDir, onProgress, signal) =>
         assetProcessor.downloadImageVariant(
           variant,
           tempDir,
-          undefined,
+          onProgress,
           signal,
           { maxSide: MAX_IMAGE_SIDE, background: "#ffffff" },
         ),
-      downloadVideo: (variant, tempDir, maxFileSize, signal) =>
+      downloadVideo: (variant, tempDir, maxFileSize, onProgress, signal) =>
         assetProcessor.downloadVideoVariant(
           variant,
           tempDir,
           maxFileSize,
-          undefined,
+          onProgress,
           signal,
         ),
     },
   ) {}
 
   canHandle(url: string): boolean {
-    return parsePoolUrl(url) !== null;
+    return parseTarget(url) !== null;
+  }
+
+  private async fetchPost(
+    target: Target,
+    signal?: AbortSignal,
+  ): Promise<E621Post> {
+    const { status, data } = await this.deps.fetchJson(
+      `${API_BASE}/posts/${target.id}.json`,
+      signal,
+    );
+    const post = (data as { post?: E621Post } | null)?.post;
+    // e926 only serves safe posts, anything else doesn't exist there
+    if (status === 404 || (post && target.safeOnly && post.rating !== "s")) {
+      throw new DownloadError("post not found");
+    }
+    if (status !== 200 || !post?.file) {
+      logger.error(
+        `e621 post ${target.id} request failed with status ${status}`,
+      );
+      throw new DownloadError("failed to get post info");
+    }
+    if (post.flags?.deleted) {
+      throw new DownloadError("post was deleted");
+    }
+
+    return post;
   }
 
   private async fetchPool(
@@ -364,28 +424,35 @@ export class E621PlatformHandler implements PlatformHandler {
     tempDir: string,
     maxFileSize?: number,
     signal?: AbortSignal,
+    onProgress?: ProgressCallback,
   ): Promise<GalleryEntry> {
     const pageUrl = `https://${host}/posts/${post.id}`;
     const contentRating = normalizeRating(post.rating);
     const ext = post.file.ext.toLowerCase();
 
-    if (VIDEO_EXTENSIONS.has(ext)) {
+    if (isVideoPost(post)) {
       const variants: VideoVariant[] = [];
-      for (const candidate of getVideoCandidates(post, maxFileSize)) {
-        throwIfAborted(signal);
-        const variant = await this.deps.downloadVideo(
-          candidate,
-          tempDir,
-          maxFileSize,
-          signal,
-        );
-        variants.push({ ...variant, downloadUrl: pageUrl, contentRating });
-        if (
-          variant.downloaded &&
-          (maxFileSize === undefined || variant.size <= maxFileSize)
-        ) {
-          break;
+      try {
+        for (const candidate of getVideoCandidates(post, maxFileSize)) {
+          throwIfAborted(signal);
+          const variant = await this.deps.downloadVideo(
+            candidate,
+            tempDir,
+            maxFileSize,
+            onProgress,
+            signal,
+          );
+          variants.push({ ...variant, downloadUrl: pageUrl, contentRating });
+          if (
+            variant.downloaded &&
+            (maxFileSize === undefined || variant.size <= maxFileSize)
+          ) {
+            break;
+          }
         }
+      } catch (error) {
+        cleanupEntries([{ kind: "video", variants }]);
+        throw error;
       }
 
       return {
@@ -413,6 +480,7 @@ export class E621PlatformHandler implements PlatformHandler {
         height: post.file.height,
       },
       tempDir,
+      onProgress,
       signal,
     );
     return {
@@ -421,12 +489,74 @@ export class E621PlatformHandler implements PlatformHandler {
     };
   }
 
+  private async downloadSinglePost(
+    target: Target,
+    tempDir: string,
+    options?: DownloadOptions,
+  ): Promise<DownloadExecutionResult> {
+    const maxFileSize = options?.maxFileSize;
+    await options?.onProgress?.({
+      stage: "status",
+      message: "resolving post...",
+    });
+    const post = await this.fetchPost(target, options?.signal);
+    const ext = post.file.ext.toLowerCase();
+    if (!isVideoPost(post) && !IMAGE_EXTENSIONS.has(ext)) {
+      throw new DownloadError(`unsupported file format: ${ext}`);
+    }
+
+    if (
+      isVideoPost(post) &&
+      maxFileSize !== undefined &&
+      !getVideoCandidates(post, maxFileSize).length
+    ) {
+      const sizes = getVideoCandidates(post).map(
+        (candidate) => candidate.estimatedSizeBytes ?? Infinity,
+      );
+      throw new DownloadError(
+        buildOversizeMessage({
+          estimatedSizeBytes: sizes.length ? Math.min(...sizes) : undefined,
+          exact: true,
+        }),
+      );
+    }
+
+    const entry = await this.downloadPost(
+      post,
+      target.host,
+      tempDir,
+      maxFileSize,
+      options?.signal,
+      options?.onProgress,
+    );
+    const cleanup = () => cleanupEntries([entry]);
+    if (!entry.variants.some((variant) => variant.downloaded)) {
+      cleanup();
+      throw new DownloadError(`failed to download ${entry.kind}`);
+    }
+
+    await options?.onProgress?.({
+      stage: "completed",
+      message: "download complete",
+    });
+
+    // single posts take the regular single-media path: compressed photo, or
+    // the best-fitting video sent with its own dimensions and duration
+    return {
+      res:
+        entry.kind === "image"
+          ? { contentType: "image", variants: [entry.variants] }
+          : { contentType: "video", variants: entry.variants },
+      cleanup,
+    };
+  }
+
   async download(
     url: string,
     _context = {},
     options?: DownloadOptions,
   ): Promise<DownloadExecutionResult> {
-    const target = parsePoolUrl(url);
+    const target = parseTarget(url);
     if (!target) {
       throw new DownloadError("unsupported link");
     }
@@ -434,10 +564,14 @@ export class E621PlatformHandler implements PlatformHandler {
     const signal = options?.signal;
     const onProgress = options?.onProgress;
     const tempDir = options?.tempDir || config.get("TEMP_DIR");
-    logger.debug(`starting e621 pool download for ${url}`);
+    logger.debug(`starting e621 ${target.kind} download for ${url}`);
+
+    if (target.kind === "post") {
+      return await this.downloadSinglePost(target, tempDir, options);
+    }
 
     await onProgress?.({ stage: "status", message: "resolving pool..." });
-    const pool = await this.fetchPool(target.poolId, signal);
+    const pool = await this.fetchPool(target.id, signal);
     const posts = await this.collectPosts(pool, target.safeOnly, signal);
     if (!posts.length) {
       throw new DownloadError("pool has no available posts");

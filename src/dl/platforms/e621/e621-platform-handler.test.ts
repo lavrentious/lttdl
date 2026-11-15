@@ -63,6 +63,16 @@ function createHandler({
         };
       }
 
+      const single = /\/posts\/(\d+)\.json$/.exec(url);
+      if (single) {
+        const post = posts.find(
+          (candidate) => candidate.id === Number(single[1]),
+        );
+        return post
+          ? { status: 200, data: { post } }
+          : { status: 404, data: null };
+      }
+
       const tags = decodeURIComponent(new URL(url).searchParams.get("tags")!);
       const ids = new Set(tags.replace(/^id:/, "").split(",").map(Number));
       // api answers in id-descending order, not pool order
@@ -79,13 +89,16 @@ function createHandler({
 }
 
 describe("E621PlatformHandler", () => {
-  test("handles pool links on both domains only", () => {
+  test("handles pool and post links on both domains only", () => {
     const { handler } = createHandler({ postIds: [], posts: [] });
 
     expect(handler.canHandle("https://e621.net/pools/57440")).toBe(true);
     expect(handler.canHandle("https://e926.net/pools/57440?page=2")).toBe(true);
     expect(handler.canHandle("https://www.e621.net/pools/57440/")).toBe(true);
-    expect(handler.canHandle("https://e621.net/posts/123")).toBe(false);
+    expect(handler.canHandle("https://e621.net/posts/123")).toBe(true);
+    expect(handler.canHandle("https://e926.net/posts/123?q=pool:1")).toBe(true);
+    expect(handler.canHandle("https://e621.net/post/show/123")).toBe(true);
+    expect(handler.canHandle("https://e621.net/posts")).toBe(false);
     expect(handler.canHandle("https://e621.net/pools")).toBe(false);
     expect(handler.canHandle("https://example.net/pools/1")).toBe(false);
   });
@@ -185,21 +198,42 @@ describe("E621PlatformHandler", () => {
     ]);
   });
 
-  test("prefers mp4 alternates for videos and falls through failures", async () => {
+  test("tries video encodes best-fitting first, webm last", async () => {
     const attempted: string[] = [];
     const { handler } = createHandler({
       postIds: [1],
       posts: [
         buildPost(1, {
-          file: { ext: "webm", url: "https://static/orig.webm" },
+          file: {
+            ext: "webm",
+            url: "https://static/orig.webm",
+            width: 2160,
+            height: 3840,
+            size: 30_000_000,
+          },
           sample: {
             alternates: {
               variants: {
-                mp4: { url: "https://static/alt.mp4", size: 60_000_000 },
+                mp4: {
+                  url: "https://static/alt.mp4",
+                  width: 1080,
+                  height: 1920,
+                  size: 60_000_000,
+                },
               },
               samples: {
-                "720p": { url: "https://static/720p.mp4", size: 1000 },
-                "480p": { url: "https://static/480p.mp4", size: 500 },
+                "480p": {
+                  url: "https://static/480p.mp4",
+                  width: 480,
+                  height: 852,
+                  size: 500,
+                },
+                "720p": {
+                  url: "https://static/720p.mp4",
+                  width: 720,
+                  height: 1280,
+                  size: 1000,
+                },
               },
             },
           },
@@ -207,16 +241,16 @@ describe("E621PlatformHandler", () => {
       ],
       downloadVideo: async (variant) => {
         attempted.push(variant.url);
-        if (variant.url.endsWith("720p.mp4")) {
-          return { downloaded: false, downloadUrl: variant.url };
-        }
-        return {
-          downloaded: true,
-          downloadUrl: variant.url,
-          path: "/tmp/video.mp4",
-          size: 500,
-          payload: { resolution: { width: 480, height: 852 } },
-        };
+        // every mp4 fails, so the webm fallback is reached
+        return variant.url.endsWith(".webm")
+          ? {
+              downloaded: true,
+              downloadUrl: variant.url,
+              path: "/tmp/video.mp4",
+              size: 500,
+              payload: { resolution: { width: 2160, height: 3840 } },
+            }
+          : { downloaded: false, downloadUrl: variant.url };
       },
     });
 
@@ -229,10 +263,11 @@ describe("E621PlatformHandler", () => {
       },
     );
 
-    // alt.mp4 is over the size limit, 720p fails, 480p succeeds, webm untouched
+    // alt.mp4 is over the size limit; mp4s by resolution before the webm
     expect(attempted).toEqual([
       "https://static/720p.mp4",
       "https://static/480p.mp4",
+      "https://static/orig.webm",
     ]);
     if (res.contentType !== "gallery") throw new Error("expected gallery");
     expect(res.entries[0]!.kind).toBe("video");
@@ -328,5 +363,170 @@ describe("E621PlatformHandler", () => {
       ),
     ).rejects.toThrow();
     expect(cleaned.length).toBeGreaterThan(0);
+  });
+
+  test("sends a single image post as a regular image with its rating", async () => {
+    const downloaded: string[] = [];
+    const { handler } = createHandler({
+      postIds: [],
+      posts: [buildPost(7, { rating: "e" })],
+      downloadImage: async (variant) => {
+        downloaded.push(variant.url);
+        return downloadedPhoto(variant);
+      },
+    });
+
+    const { res } = await handler.download!(
+      "https://e621.net/posts/7",
+      {},
+      {
+        tempDir: "/tmp",
+      },
+    );
+
+    expect(downloaded).toEqual([buildPost(7).file.url!]);
+    if (res.contentType !== "image") throw new Error("expected image");
+    expect(res.variants).toHaveLength(1);
+    expect(res.variants[0]![0]!.contentRating).toBe("e");
+    expect(res.variants[0]![0]!.downloadUrl).toBe("https://e621.net/posts/7");
+  });
+
+  test("sends a single video post as the best encode that fits", async () => {
+    const attempted: string[] = [];
+    const { handler } = createHandler({
+      postIds: [],
+      posts: [
+        buildPost(8, {
+          rating: "q",
+          file: {
+            ext: "mp4",
+            url: "https://static/orig.mp4",
+            width: 1920,
+            height: 1080,
+            size: 80_000_000,
+          },
+          sample: {
+            alternates: {
+              samples: {
+                "480p": {
+                  url: "https://static/480p.mp4",
+                  width: 854,
+                  height: 480,
+                  size: 8_000_000,
+                },
+                "720p": {
+                  url: "https://static/720p.mp4",
+                  width: 1280,
+                  height: 720,
+                  size: 20_000_000,
+                },
+              },
+            },
+          },
+        }),
+      ],
+      downloadVideo: async (variant) => {
+        attempted.push(variant.url);
+        return {
+          downloaded: true,
+          downloadUrl: variant.url,
+          path: "/tmp/video.mp4",
+          size: variant.estimatedSizeBytes!,
+          payload: { resolution: { width: 1280, height: 720 } },
+        };
+      },
+    });
+
+    const { res } = await handler.download!(
+      "https://e621.net/posts/8",
+      {},
+      {
+        tempDir: "/tmp",
+        maxFileSize: 50_000_000,
+      },
+    );
+
+    expect(attempted).toEqual(["https://static/720p.mp4"]);
+    if (res.contentType !== "video") throw new Error("expected video");
+    expect(res.variants[0]!.contentRating).toBe("q");
+  });
+
+  test("reports single videos that are too large in every encode", async () => {
+    const { handler } = createHandler({
+      postIds: [],
+      posts: [
+        buildPost(9, {
+          file: {
+            ext: "mp4",
+            url: "https://static/orig.mp4",
+            size: 90_000_000,
+          },
+          sample: {
+            alternates: {
+              samples: {
+                "480p": { url: "https://static/480p.mp4", size: 60_000_000 },
+              },
+            },
+          },
+        }),
+      ],
+    });
+
+    await expect(
+      handler.download!(
+        "https://e621.net/posts/9",
+        {},
+        {
+          tempDir: "/tmp",
+          maxFileSize: 50_000_000,
+        },
+      ),
+    ).rejects.toThrow("video is too large to upload (57.2 MB)");
+  });
+
+  test("hides non-safe posts on e926", async () => {
+    const { handler } = createHandler({
+      postIds: [],
+      posts: [buildPost(10, { rating: "e" })],
+    });
+
+    await expect(
+      handler.download!("https://e926.net/posts/10", {}, { tempDir: "/tmp" }),
+    ).rejects.toThrow("post not found");
+  });
+
+  test("rejects missing, deleted and unsupported single posts", async () => {
+    const { handler } = createHandler({
+      postIds: [],
+      posts: [
+        buildPost(11, { flags: { deleted: true } }),
+        buildPost(12, { file: { ext: "swf" } }),
+      ],
+    });
+    const download = (id: number) =>
+      handler.download!(
+        `https://e621.net/posts/${id}`,
+        {},
+        { tempDir: "/tmp" },
+      );
+
+    await expect(download(404)).rejects.toThrow("post not found");
+    await expect(download(11)).rejects.toThrow("post was deleted");
+    await expect(download(12)).rejects.toThrow("unsupported file format: swf");
+  });
+
+  test("fails single posts whose download failed", async () => {
+    const { handler } = createHandler({
+      postIds: [],
+      posts: [buildPost(13)],
+      downloadImage: async (variant) => ({
+        downloaded: false,
+        downloadUrl: variant.url,
+      }),
+    });
+
+    await expect(
+      handler.download!("https://e621.net/posts/13", {}, { tempDir: "/tmp" }),
+    ).rejects.toThrow("failed to download image");
   });
 });
